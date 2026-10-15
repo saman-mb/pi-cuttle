@@ -18,8 +18,17 @@ the parent's model runtime — the queue the child reads is empty. Do not rely o
 
 ## The fix
 
-Add the router extension to `subagents.defaultSubagentOnlyExtensions` so **every** child loads
-it and its `session_start` handler selects `router/auto`:
+**Install the router as a pi package so the parent has it too.** pi-subagents resolves the
+child's model against the **parent's** registry at launch preflight; if the router is only in
+`subagentOnlyExtensions` (children-only), the parent cannot resolve `router/auto` and the launch
+fails with `Unknown subagent model 'router/auto' in the active Pi model registry`.
+
+```bash
+pi install git:github.com/saman-mb/pi-model-router
+```
+
+Then add the router to `subagents.defaultSubagentOnlyExtensions` so every child loads it and
+its `session_start` handler selects `router/auto`:
 
 ```json
 {
