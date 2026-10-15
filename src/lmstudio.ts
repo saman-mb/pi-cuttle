@@ -81,7 +81,7 @@ export class LmStudioClient {
 		});
 	}
 
-	/** One-shot chat completion, used by the local classifier. */
+	/** One-shot chat completion, used by the local classifier for chat models. */
 	async chat(modelKey: string, prompt: string, options: { maxTokens?: number; signal?: AbortSignal } = {}): Promise<string> {
 		const body = await this.request<ChatResponse>("/api/v1/chat", {
 			method: "POST",
@@ -96,4 +96,46 @@ export class LmStudioClient {
 		});
 		return body.choices?.[0]?.message?.content ?? "";
 	}
+
+	/** Model type from the catalog (`llm`, `vlm`, `embeddings`, `decision`). */
+	async modelType(modelKey: string): Promise<string | undefined> {
+		try {
+			const models = await this.list();
+			return models.find((m) => m.key === modelKey)?.type;
+		} catch {
+			return undefined;
+		}
+	}
+
+	/**
+	 * System One decision call, used for `decision`-type models such as the Jev-family GGUFs.
+	 *
+	 * Protocol verified against pi's `typesafe-system-one` transport: POST to `/v1/systemone`
+	 * with `{ model, state, questions }`, `bool` renamed to `noul`, and answers keyed by question id.
+	 */
+	async systemOne(
+		modelKey: string,
+		state: Record<string, unknown>,
+		questions: Record<string, { type: string } & Record<string, unknown>>,
+		options: { signal?: AbortSignal } = {},
+	): Promise<{ answers: Record<string, SystemOneAnswer>; errorMessage?: string }> {
+		const wire = Object.fromEntries(
+			Object.entries(questions).map(([id, q]) => [id, q.type === "bool" ? { ...q, type: "noul" } : q]),
+		);
+		const body = await this.request<{ answers?: Record<string, SystemOneAnswer> }>("/v1/systemone", {
+			method: "POST",
+			body: JSON.stringify({ model: modelKey, state, questions: wire }),
+			...(options.signal ? { signal: options.signal } : {}),
+		});
+		return { answers: body.answers ?? {} };
+	}
+}
+
+export interface SystemOneAnswer {
+	type?: string;
+	choice?: string;
+	probabilities?: Record<string, number>;
+	confidence?: number;
+	score?: number;
+	noul?: number;
 }

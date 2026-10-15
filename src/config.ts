@@ -8,13 +8,14 @@
  * Precedence: project `.pi/model-router.json` over user `~/.pi/agent/model-router.json`
  * over DEFAULTS. Merge is shallow per top-level section.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import type { RouterConfig } from "./types.ts";
 
 export const DEFAULTS: RouterConfig = {
+	autoSelect: true,
 	classifier: { fallback: "heuristic", timeoutMs: 4000, stateChars: 16_000 },
 	catalog: { local: [], cloud: [] },
 	policy: { mode: "complexity", threshold: 0.5, phase: { plan: "cloud", implement: "local" }, reclassify: "session" },
@@ -62,6 +63,7 @@ function mergeSection<T extends object>(base: T, patch: unknown): T {
 export function applyOverrides(config: RouterConfig, parsed: unknown): RouterConfig {
 	if (!isRecord(parsed)) return config;
 	return {
+		autoSelect: typeof parsed.autoSelect === "boolean" ? parsed.autoSelect : config.autoSelect,
 		classifier: mergeSection(config.classifier, parsed.classifier),
 		catalog: mergeSection(config.catalog, parsed.catalog),
 		policy: mergeSection(config.policy, parsed.policy),
@@ -89,8 +91,7 @@ export function loadConfig(cwd: string): LoadedConfig {
 			continue;
 		}
 		config = applyOverrides(config, parsed);
-		sources.push(resolve(path));
-	}
+		sources.push(resolve(path));	}
 
 	config.local.slotDir = resolve(expandHome(config.local.slotDir));
 	config.lmstudio.baseUrl = config.lmstudio.baseUrl.replace(/\/+$/, "");
@@ -99,4 +100,33 @@ export function loadConfig(cwd: string): LoadedConfig {
 		warnings.push("no models configured: set catalog.local and catalog.cloud in model-router.json");
 	}
 	return { config, sources, warnings };
+}
+
+/** Path of the user config file the `/router` command writes to. */
+export function userConfigPath(): string {
+	return join(homedir(), ".pi", "agent", "model-router.json");
+}
+
+/**
+ * Persist a partial update to the user config file, preserving unknown keys.
+ * Used by `/router` so interactive edits survive a restart.
+ */
+export function saveUserConfig(patch: Record<string, unknown>): string {
+	const path = userConfigPath();
+	let current: Record<string, unknown> = {};
+	if (existsSync(path)) {
+		try {
+			const parsed = JSON.parse(readFileSync(path, "utf8"));
+			if (isRecord(parsed)) current = parsed;
+		} catch {
+			/* overwrite corrupt file rather than refusing to save */
+		}
+	}
+	const merged = { ...current };
+	for (const [section, value] of Object.entries(patch)) {
+		merged[section] = isRecord(value) && isRecord(merged[section]) ? { ...(merged[section] as object), ...value } : value;
+	}
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, JSON.stringify(merged, null, 2) + "\n");
+	return path;
 }

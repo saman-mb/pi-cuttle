@@ -4,26 +4,17 @@
 
 Type one prompt. A local classifier decides whether the work belongs on a local model
 (free, private) or a cloud model (expensive, capable). The decision is made **once per
-turn**, not per request, so it does not thrash the prompt cache. A cross-process memory
-governor stops subagent fanout from loading ten local models at once.
+session by default**, not per request, so it does not thrash the prompt cache. A
+cross-process memory governor stops subagent fanout from loading ten local models at once.
 
-> **Status: scaffold.** The architecture is verified against the pi docs and the
-> installed `pi-subagents` source. Nothing here routes a live request yet. See
-> [Verification gaps](#verification-gaps) and the [issue backlog](https://github.com/saman-mb/pi-model-router/issues).
+- **What changes** — You select one virtual model (`router/auto`); the router dispatches each
+  turn to the right physical model. Local, cloud, or let the classifier decide.
+- **Why it matters** — Most coding turns are mechanical and do not justify frontier-model cost.
+  The classifier runs locally, so the *decision* is free.
+- **Who is affected** — Anyone running pi against a local model server (LM Studio, llama.cpp)
+  alongside a paid provider, especially with `pi-subagents`.
 
----
-
-## What changes / why it matters / who it affects
-
-- **What changes** — Instead of picking one model for a whole session, you select a single
-  virtual model (`router/auto`). Each new user turn is classified locally and dispatched to
-  the right physical model. Choose local, cloud, or let it decide.
-- **Why it matters** — Cloud tokens cost money and local GPUs sit idle. Most turns in a coding
-  session are mechanical (renames, lookups, small edits) and do not need a frontier model.
-  The classifier itself runs locally, so the *decision* costs nothing.
-- **Who is affected** — Anyone running pi against a local model server (LM Studio, llama.cpp,
-  Ollama) alongside a paid cloud provider. Especially anyone using `pi-subagents`, where a
-  fanout of children can silently exhaust VRAM.
+Status: **working core, live-verified.** See [Verification](#verification).
 
 ---
 
@@ -34,13 +25,13 @@ you select:   router/auto                (one model in /model, --model, settings
                  │
                  ▼
         ┌──────────────────┐
-        │  route(request)  │  once per user turn; continuations stay put
+        │  route(request)  │  once per session by default; continuations stay put
         └────────┬─────────┘
                  │
    ┌─────────────┴─────────────┐
    ▼                           ▼
 local classifier           heuristic fallback
-(LM Studio or Jev)         (no model call)
+(System One Jev / chat)    (no model call)
    │                           │
    └─────────────┬─────────────┘
                  ▼
@@ -50,21 +41,25 @@ local classifier           heuristic fallback
                  │
    ┌─────────────┴─────────────┐
    ▼                           ▼
-lmstudio/… (free)        opencode-go/… (metered)
+lmstudio/… (free)        cloud/… (metered)
 ```
 
-Key mechanics, all verified against pi's docs/source (see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)):
-
 1. **Virtual models** (`pi.registerVirtualModel`) select a physical model per request.
-   They appear in `/model`, `--model`, scoped models, and settings like any other model.
-2. **Router state** is stored on the session branch and survives compaction and forks.
-3. **Subagents inherit the virtual model.** `pi-subagents` explicitly copies
-   extension-registered virtual models into child sessions, so one router covers the main
-   agent and every child.
-4. **Foreground children do not reload ambient extensions**, so `route()` must not depend on
-   a sibling extension's session hooks — it talks to LM Studio over plain HTTP.
+2. **`session_start` selects `router/auto`** — this is how routing becomes the default,
+   because `defaultModel` does not resolve an extension virtual model (see spike #24).
+3. **Router state** lives on the session branch and survives compaction and forks.
+4. **`route()` talks to LM Studio over plain HTTP**, never through another extension's
+   hooks, because foreground subagent children do not reload ambient extensions.
 
 ---
+
+## Install
+
+```bash
+pi install git:github.com/saman-mb/pi-model-router
+# or try a checkout without installing:
+pi -e /path/to/pi-model-router
+```
 
 ## Configuration
 
@@ -72,55 +67,95 @@ A single file, `~/.pi/agent/model-router.json` (project `.pi/model-router.json` 
 
 ```json
 {
-  "classifier": { "model": "lmstudio/openjev-2b", "fallback": "heuristic" },
+  "autoSelect": true,
+  "classifier": { "model": "lmstudio/decision-2.0-kai-0.6b", "fallback": "heuristic" },
   "catalog": {
-    "local": ["lmstudio/deepseek/deepseek-v4-flash"],
+    "local": ["lmstudio/prism-ml/bonsai-27b"],
     "cloud": ["opencode-go/deepseek-v4.1-flash"]
   },
-  "policy": { "mode": "complexity", "threshold": 0.5 },
-  "local": { "maxConcurrent": 1, "onFull": "spill" }
+  "policy": { "mode": "complexity", "threshold": 0.5, "reclassify": "session" },
+  "local": { "maxConcurrent": 1, "maxLoadedModels": 1, "onFull": "spill" }
 }
 ```
 
-See [docs/CONFIG.md](docs/CONFIG.md) for every field. Interactive editing:
+| Field | Meaning |
+|---|---|
+| `autoSelect` | Select `router/auto` at session start (unless `--model` was passed). |
+| `classifier.model` | `provider/model` of the decision model. `lmstudio/…` is called locally. |
+| `classifier.fallback` | `heuristic` \| `local` \| `cloud` when the classifier is unavailable. |
+| `catalog.local` / `catalog.cloud` | Ordered candidate models. First match wins. |
+| `policy.mode` | `complexity` \| `cost` (bias local) \| `phase` (plan vs implement). |
+| `policy.reclassify` | `session` (default) or `turn`. |
+| `local.*` | The memory governor. See [docs/CONFIG.md](docs/CONFIG.md). |
+
+Interactive editing (persists to the user config file):
 
 ```
-/router              # status + pick models, policy, pins
-/router local        # pin this session to local
-/router cloud        # pin this session to cloud
+/router                 # status: slots, loaded models, config sources
+/router models          # pick the local, cloud, or decision model
+/router policy          # complexity | cost | phase
+/router limit           # max concurrent local requests
+/router local|cloud|auto  # pin this session
 ```
+
+One-off override: `pi --router-force=cloud`.
+
+## Subagents
+
+A subagent only routes if it loads this extension. Add it to the pi-subagents defaults so
+every child does:
+
+```json
+{
+  "subagents": {
+    "defaultModel": "router/auto",
+    "defaultSubagentOnlyExtensions": ["/absolute/path/to/pi-model-router/src/index.ts"]
+  }
+}
+```
+
+Then choose a policy per role with pi's native mapping — no router code changes:
+
+```json
+{
+  "subagents": {
+    "agentOverrides": {
+      "scout":  { "model": "router/fast-local" },
+      "worker": { "model": "router/cloud" },
+      "oracle": { "model": "router/cloud" }
+    }
+  }
+}
+```
+
+`router/auto`, `router/local`, `router/cloud`, and `router/fast-local` are all selectable
+models. See [docs/SUBAGENTS.md](docs/SUBAGENTS.md) for why `defaultModel` alone is not enough.
 
 ---
 
-## Install
+## Verification
 
-Scaffold, not yet published. To try the extension from a checkout:
+Every mechanic was checked against a live pi 1.2.0 install. Full evidence is on the closed
+issues; the results that shape the design:
+
+| Finding | Result |
+|---|---|
+| `defaultModel: "router/auto"` resolves at startup? | **No.** Use `session_start` + `pi.setModel`. |
+| Does `message_end` fire once per request? | **Yes** — once per assistant message, even multi-block. |
+| Are extension CLI flags readable in the factory? | **No** — read lazily in handlers. |
+| Does LM Studio accept a load TTL? | **No** — unload by `instance_id`; TTL is server-side. |
+| Do children inherit virtual models? | **Not reliably** — load the extension via `subagentOnlyExtensions`. |
+
+Live-verified end to end: a mechanical prompt routes local (`lmstudio/prism-ml/bonsai-27b`),
+a design prompt routes cloud (`opencode-go/deepseek-v4.1-flash`), and the local slot is
+released after the turn.
+
+## Tests
 
 ```bash
-pi -e /path/to/pi-model-router
+npm test          # node --experimental-strip-types --test test/*.test.ts
+npm run typecheck
 ```
-
-Once there is a working release, install as a package:
-
-```bash
-pi install git:github.com/saman-mb/pi-model-router
-```
-
----
-
-## Verification gaps
-
-These are **not** assumptions — they are open questions with tests assigned in the backlog:
-
-| # | Question | Why it matters |
-|---|---|---|
-| 1 | Does `defaultModel: "router/auto"` resolve at startup? | The "by default" promise. Docs promise it for `registerProvider`, not `registerVirtualModel`. |
-| 2 | Does `message_end` fire exactly once per provider request? | Slot release precision. If not, stale reaping must carry the load. |
-| 3 | Are extension-registered CLI flags honoured on the same invocation? | `--router-force` UX. |
-| 4 | Does virtual-model propagation to children hold on supported `pi-subagents` versions? | Main+subagent coverage. Code-verified locally, not doc-guaranteed. |
-| 5 | Does LM Studio's load endpoint accept a TTL parameter? | Idle-memory reclamation; not in the local API reference. |
-
----
 
 ## License
 

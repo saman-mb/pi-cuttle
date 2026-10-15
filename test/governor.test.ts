@@ -80,3 +80,41 @@ test("releaseOne frees the oldest reservation for a model", async () => {
 	assert.equal(gov.releaseOne("lmstudio/model-a"), true);
 	assert.equal(gov.releaseOne("lmstudio/model-a"), false, "nothing left to release");
 });
+
+test("per-flavor budget gates one flavor without blocking another (#16)", async () => {
+	cfg = { ...cfg, maxConcurrent: 5, maxConcurrentPerModel: 5, maxConcurrentByFlavor: { local: 1 } };
+	const gov = new LocalGovernor(cfg, fakeLm());
+	const a = await gov.acquire("lmstudio/model-a", { flavor: "local" });
+	assert.ok(a, "first local-flavor slot");
+	assert.equal(await gov.acquire("lmstudio/model-a", { flavor: "local" }), null, "second local-flavor blocked");
+	assert.ok(await gov.acquire("lmstudio/model-a", { flavor: "auto" }), "auto flavor is not gated");
+});
+
+test("enforceLoadedCeiling unloads the models closest to TTL, keeping the target (#14)", async () => {
+	cfg = { ...cfg, maxLoadedModels: 1 };
+	const unloads: string[] = [];
+	const lm = {
+		loaded: async () => [
+			{ key: "lmstudio/keep", instances: [{ id: "lmstudio/keep", remaining_ttl_seconds: 5000 }] },
+			{ key: "lmstudio/old", instances: [{ id: "lmstudio/old", remaining_ttl_seconds: 10 }] },
+		],
+		unload: async (id: string) => {
+			unloads.push(id);
+		},
+	} as unknown as LmStudioClient;
+	const gov = new LocalGovernor(cfg, lm);
+	const unloaded = await gov.enforceLoadedCeiling("lmstudio/keep");
+	assert.deepEqual(unloaded, ["lmstudio/old"]);
+	assert.deepEqual(unloads, ["lmstudio/old"]);
+});
+
+test("enforceLoadedCeiling is a no-op when the ceiling is disabled", async () => {
+	cfg = { ...cfg, maxLoadedModels: 0 };
+	const unloads: string[] = [];
+	const lm = {
+		loaded: async () => [{ key: "a", instances: [{ id: "a" }] }],
+		unload: async (id: string) => void unloads.push(id),
+	} as unknown as LmStudioClient;
+	assert.deepEqual(await new LocalGovernor(cfg, lm).enforceLoadedCeiling(), []);
+	assert.equal(unloads.length, 0);
+});

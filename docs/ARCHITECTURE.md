@@ -59,12 +59,14 @@ or the `pi-subagents` package.
 | `src/commands.ts` | `/router` command. |
 | `src/index.ts` | Extension factory; wires the above; `message_end` release hook. |
 
-## Open empirical questions
+## Verification results
 
-These are tracked as issues and must be answered by running pi, not by reading docs:
+All five questions were answered by running pi 1.2.0. Full evidence is on the closed issues.
 
-1. Does `defaultModel: "router/auto"` resolve at startup?
-2. Does `message_end` fire exactly once per provider request?
-3. Are extension-registered CLI flags honoured on the same invocation?
-4. Does virtual-model propagation to children hold on the supported `pi-subagents` range?
-5. Does LM Studio's load endpoint accept a TTL parameter?
+| Question | Answer | Consequence |
+|---|---|---|
+| `defaultModel: "router/auto"` resolves at startup? | **No** | Select it on `session_start` via `pi.setModel` (#24). |
+| `message_end` once per provider request? | **Yes** | Slot release is exact; stale reaping is a safety net (#25). |
+| Extension flags readable in the factory? | **No** | Read `--router-force` lazily in `route()` (#26). |
+| LM Studio load accepts a TTL? | **No** | Unload by `instance_id`; TTL is server-side (#27). |
+| Children inherit virtual models? | **Not reliably** | Load the extension via `subagentOnlyExtensions` (#28). |

@@ -45,6 +45,8 @@ export interface LocalConfig {
 	maxConcurrent: number;
 	/** Maximum concurrent local requests for any single local model. */
 	maxConcurrentPerModel: number;
+	/** Optional per-virtual-model concurrency budgets (e.g. { "local": 1, "fast-local": 1 }). */
+	maxConcurrentByFlavor?: Record<string, number>;
 	/** Cooperative ceiling on models loaded in LM Studio at once. */
 	maxLoadedModels: number;
 	/** What to do when the local side is saturated. */
@@ -66,6 +68,8 @@ export interface LmStudioConfig {
 }
 
 export interface RouterConfig {
+	/** Select `router/auto` automatically when a session starts (unless `--model` was passed). */
+	autoSelect: boolean;
 	classifier: ClassifierConfig;
 	catalog: CatalogConfig;
 	policy: PolicyConfig;
@@ -102,6 +106,8 @@ export interface Reservation {
 	pid: number;
 	startedAt: number;
 	sessionId?: string;
+	/** The virtual-model flavor that reserved the slot, for per-role budgets. */
+	flavor?: string;
 }
 
 export interface LoadedInstance {
@@ -114,6 +120,7 @@ export interface LmModel {
 	key: string;
 	type?: string;
 	state?: string;
+	size_bytes?: number;
 	max_context_length?: number;
 	loaded_instances?: LoadedInstance[];
 }

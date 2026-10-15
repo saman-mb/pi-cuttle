@@ -88,9 +88,34 @@ export async function decideTier(input: {
 	try {
 		let answer: string | undefined;
 		if (parsed.provider === "lmstudio") {
-			answer = await lm.chat(parsed.id, CLASSIFIER_PROMPT(clipped, config.policy.threshold), {
-				signal: AbortSignal.timeout(config.classifier.timeoutMs),
-			});
+			const signal = AbortSignal.timeout(config.classifier.timeoutMs);
+			const type = await lm.modelType(parsed.id);
+			if (type === "decision") {
+				// A Jev-style decision model: ask it a typed question over the System One API.
+				const result = await lm.systemOne(
+					parsed.id,
+					{ prompt: clipped },
+					{
+						complexity: {
+							type: "choice",
+							instructions: "How demanding is the software engineering work requested in prompt?",
+							criteria: {
+								standard: "Mechanical, well-scoped, or informational",
+								complex: "Design judgement, cross-cutting change, or hard debugging",
+							},
+						},
+					},
+					{ signal },
+				);
+				const choice = result.answers.complexity;
+				if (choice?.type === "choice") {
+					const complex = choice.probabilities?.complex ?? (choice.choice === "complex" ? 1 : 0);
+					const tier: Tier = complex >= 0.5 ? "cloud" : "local";
+					return { tier, score: complex, source: "classifier", reason: `local system-one p(complex)=${complex.toFixed(2)}` };
+				}
+			} else {
+				answer = await lm.chat(parsed.id, CLASSIFIER_PROMPT(clipped, config.policy.threshold), { signal });
+			}
 		} else {
 			const model = ctx.modelRegistry.findOfType("classifier", parsed.provider, parsed.id);
 			if (!model) throw new Error(`classifier ${parsed.provider}/${parsed.id} not in catalog`);
@@ -124,4 +149,28 @@ export async function decideTier(input: {
 
 	if (config.classifier.fallback === "heuristic") return heuristicDecision(config, prompt);
 	return { tier: config.classifier.fallback, score: 0, source: "heuristic", reason: `classifier unavailable, fallback ${config.classifier.fallback}` };
+}
+
+/**
+ * Apply `policy.mode` to the raw complexity decision (#10).
+ *
+ * - `complexity`: the decision stands.
+ * - `cost`: biased toward local; only a strong cloud signal escapes.
+ * - `phase`: the phase decides, ignoring the classifier score.
+ */
+export function applyPolicy(
+	config: RouterConfig,
+	decision: Decision,
+	phase: "planning" | "implementation",
+): Decision {
+	if (config.policy.mode === "phase") {
+		const tier: Tier = config.policy.phase[phase === "planning" ? "plan" : "implement"];
+		return { tier, score: decision.score, source: decision.source, reason: `phase ${phase} -> ${tier}` };
+	}
+	if (config.policy.mode === "cost") {
+		const bar = Math.max(config.policy.threshold, 0.75);
+		const tier: Tier = (decision.score ?? 0) >= bar ? "cloud" : "local";
+		return { tier, score: decision.score, source: decision.source, reason: `cost bar ${bar} (${decision.reason})` };
+	}
+	return decision;
 }
