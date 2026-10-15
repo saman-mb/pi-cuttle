@@ -1,0 +1,32 @@
+{
+  "classifier": {
+    "model": "lmstudio/openjev-2b",
+    "fallback": "heuristic",
+    "timeoutMs": 4000,
+    "stateChars": 16000
+  },
+  "catalog": {
+    "local": ["lmstudio/deepseek/deepseek-v4-flash"],
+    "cloud": ["opencode-go/deepseek-v4.1-flash"]
+  },
+  "policy": {
+    "mode": "complexity",
+    "threshold": 0.5,
+    "phase": { "plan": "cloud", "implement": "local" },
+    "reclassify": "session"
+  },
+  "local": {
+    "maxConcurrent": 1,
+    "maxConcurrentPerModel": 1,
+    "maxLoadedModels": 1,
+    "onFull": "spill",
+    "waitMs": 20000,
+    "idleUnloadMs": 300000,
+    "slotDir": "~/.pi/agent/model-router/slots",
+    "staleSlotMs": 300000
+  },
+  "lmstudio": {
+    "baseUrl": "http://localhost:1235",
+    "timeoutMs": 8000
+  }
+}

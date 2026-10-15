@@ -1,0 +1,65 @@
+{
+  "name": "pi-model-router",
+  "version": "0.0.0",
+  "description": "Hybrid local/cloud model routing for pi — a local classifier picks the right model per turn, with a cross-process memory governor so subagent fanout cannot exhaust local VRAM.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Saman Mathew Badakhshan",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/saman-mb/pi-model-router.git"
+  },
+  "homepage": "https://github.com/saman-mb/pi-model-router#readme",
+  "bugs": {
+    "url": "https://github.com/saman-mb/pi-model-router/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "extension",
+    "router",
+    "local-llm",
+    "lm-studio"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "files": [
+    "src",
+    "docs",
+    "examples",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-agent-core": {
+      "optional": true
+    },
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

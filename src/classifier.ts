@@ -1,0 +1,127 @@
+/**
+ * The "which side should this turn run on" decision.
+ *
+ * Two paths:
+ *   1. A decision model (local or cloud) answers a typed question through pi's
+ *      `ctx.modelRegistry.classify()` when the configured model is a registered
+ *      pi classifier, or through a direct LM Studio chat call when it is local.
+ *   2. A deterministic heuristic, used as the fallback and when no model is set.
+ *
+ * The heuristic must never throw or block: it is what runs when LM Studio is down.
+ */
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+
+import type { LmStudioClient } from "./lmstudio.ts";
+import type { Decision, RouterConfig, Tier } from "./types.ts";
+
+/** Signals that lean local (mechanical, small, cheap) vs cloud (design, ambiguous). */
+const LOCAL_HINTS = /\b(rename|typo|format|lint|comment|docstring|read|list|find|where is|grep|summar(y|ise|ize)|explain this file|what does|lookup|look up)\b/i;
+const CLOUD_HINTS = /\b(refactor|architect|design|migrate|race condition|deadlock|security|threat model|why does.*fail|root cause|plan|strategy|trade-?off|across the (codebase|repo))\b/i;
+
+/** Crude complexity score in [0,1]; higher means "more likely to need the big model". */
+export function heuristicScore(prompt: string): { score: number; reason: string } {
+	const text = prompt.trim();
+	const lengthScore = Math.min(text.length / 4000, 1); // long prompts trend complex
+	const local = LOCAL_HINTS.test(text) ? 1 : 0;
+	const cloud = CLOUD_HINTS.test(text) ? 1 : 0;
+	const keyword = cloud - local; // -1..1
+	const score = Math.max(0, Math.min(1, 0.5 * lengthScore + 0.5 * (keyword + 1) / 2));
+	const reason = cloud ? "cloud keyword" : local ? "local keyword" : "length only";
+	return { score, reason };
+}
+
+function heuristicDecision(config: RouterConfig, prompt: string): Decision {
+	const { score, reason } = heuristicScore(prompt);
+	const tier: Tier = score >= config.policy.threshold ? "cloud" : "local";
+	return { tier, score, source: "heuristic", reason };
+}
+
+/** Parse `provider/id` where `id` may itself contain slashes (e.g. Hugging Face ids). */
+export function splitRef(ref: string): { provider: string; id: string } | undefined {
+	const slash = ref.indexOf("/");
+	if (slash <= 0 || slash === ref.length - 1) return undefined;
+	return { provider: ref.slice(0, slash), id: ref.slice(slash + 1) };
+}
+
+const CLASSIFIER_PROMPT = (prompt: string, threshold: number): string =>
+	[
+		"You are a routing classifier. Decide whether the software-engineering request below",
+		"needs a large cloud model, or can be handled by a small local model.",
+		"Answer with exactly one word: LOCAL or CLOUD.",
+		`Choose CLOUD when the work needs design judgement, cross-cutting changes, or hard debugging.`,
+		`Choose LOCAL for mechanical, well-scoped, or informational work.`,
+		"",
+		"REQUEST:",
+		prompt,
+	].join("\n");
+
+function parseTier(raw: string): Tier | undefined {
+	const word = raw.trim().toUpperCase();
+	if (word.startsWith("CLOUD")) return "cloud";
+	if (word.startsWith("LOCAL")) return "local";
+	return undefined;
+}
+
+/**
+ * Decide the tier for one prompt. Never throws: any failure falls back per config.
+ *
+ * `threshold` is only used by the heuristic and by the local classifier's numeric
+ * mapping; the classifier's own answer is authoritative when it is parseable.
+ */
+export async function decideTier(input: {
+	config: RouterConfig;
+	prompt: string;
+	ctx: ExtensionContext;
+	lm: LmStudioClient;
+	forced?: Tier;
+}): Promise<Decision> {
+	const { config, prompt, ctx, lm, forced } = input;
+	if (forced) return { tier: forced, score: 0, source: "pin", reason: `pinned ${forced}` };
+	if (config.classifier.fallback === "heuristic" && !config.classifier.model) return heuristicDecision(config, prompt);
+
+	const ref = config.classifier.model;
+	if (!ref) return heuristicDecision(config, prompt);
+	const parsed = splitRef(ref);
+	if (!parsed) return heuristicDecision(config, prompt);
+
+	const clipped = prompt.slice(0, config.classifier.stateChars);
+	try {
+		let answer: string | undefined;
+		if (parsed.provider === "lmstudio") {
+			answer = await lm.chat(parsed.id, CLASSIFIER_PROMPT(clipped, config.policy.threshold), {
+				signal: AbortSignal.timeout(config.classifier.timeoutMs),
+			});
+		} else {
+			const model = ctx.modelRegistry.findOfType("classifier", parsed.provider, parsed.id);
+			if (!model) throw new Error(`classifier ${parsed.provider}/${parsed.id} not in catalog`);
+			const result = await ctx.modelRegistry.classify(
+				model,
+				{
+					state: { prompt: clipped },
+					questions: {
+						tier: {
+							type: "choice",
+							instructions: "Which model tier should handle the request in `prompt`?",
+							criteria: { local: "Mechanical, well-scoped, or informational", cloud: "Design judgement or hard debugging" },
+						},
+					},
+				},
+				{ signal: AbortSignal.timeout(config.classifier.timeoutMs) },
+			);
+			const choice = result.stopReason === "stop" ? result.answers.tier : undefined;
+			if (choice?.type === "choice") {
+				const cloud = choice.probabilities.cloud ?? 0;
+				const tier: Tier = cloud >= 0.5 ? "cloud" : "local";
+				return { tier, score: cloud, source: "classifier", reason: `classifier p(cloud)=${cloud.toFixed(2)}` };
+			}
+		}
+
+		const tier = answer === undefined ? undefined : parseTier(answer);
+		if (tier) return { tier, score: tier === "cloud" ? 1 : 0, source: "classifier", reason: `classifier said ${tier}` };
+	} catch {
+		/* fall through to fallback */
+	}
+
+	if (config.classifier.fallback === "heuristic") return heuristicDecision(config, prompt);
+	return { tier: config.classifier.fallback, score: 0, source: "heuristic", reason: `classifier unavailable, fallback ${config.classifier.fallback}` };
+}
