@@ -11,6 +11,11 @@
 #
 # Requirements: pi on PATH, LM Studio reachable, an authenticated cloud provider.
 #
+# Note: `pi` also loads installed packages, so if pi-cuttle is installed as a package its
+# `--cuttle-force` flag conflicts with `-e "$EXT"` and every process fails to load. The run
+# then exercises nothing, which is why this script asserts that routing actually happened
+# instead of trusting a peak of zero (#59).
+#
 # Usage:
 #   tools/fanout-cap-test.sh          # N=4, cap=1
 #   N=6 MAX=2 tools/fanout-cap-test.sh
@@ -65,8 +70,8 @@ sample &
 sampler=$!
 
 pids=()
-for _ in $(seq 1 "$N"); do
-	(cd "$DIR" && pi -p "Reply with exactly: ok" --model cuttle/auto -e "$EXT" --no-session >/dev/null 2>&1) &
+for i in $(seq 1 "$N"); do
+	(cd "$DIR" && PI_CUTTLE_DEBUG="$DIR/debug-$i.log" pi -p "Reply with exactly: ok" --model cuttle/auto -e "$EXT" --no-session >"$DIR/pi-$i.log" 2>&1) &
 	pids+=("$!")
 done
 
@@ -75,12 +80,37 @@ for pid in "${pids[@]}"; do wait "$pid" || status=1; done
 touch "$done_file"
 wait "$sampler" 2>/dev/null || true
 peak=$(cat "$peak_file" 2>/dev/null || echo 0)
+routed=$(cat "$DIR"/debug-*.log 2>/dev/null | grep -c "route result" || true)
+local_routes=$(cat "$DIR"/debug-*.log 2>/dev/null | grep -c "tier=local" || true)
 
 echo "fanout: $N processes, local cap $CAP"
+echo "routed: $routed decision(s), $local_routes local"
 echo "peak concurrent local slots: $peak"
-if [ "$peak" -le "$CAP" ]; then
-	echo "PASS: cap held"
-	exit "$status"
+
+# A cap that is never approached proves nothing (#59). These checks exist because the script
+# used to print PASS whenever nothing happened at all: every process failed to load the
+# extension, no slot was ever taken, and `0 -le cap` held.
+if [ "$routed" -eq 0 ]; then
+	echo "FAIL: no process produced a routing decision — the extension did not load."
+	echo "      A '--cuttle-force' conflict means pi-cuttle is also installed as a package:"
+	echo "      'pi remove git:github.com/saman-mb/pi-cuttle' and re-run this test."
+	echo "--- first process output ---"
+	tail -5 "$DIR/pi-1.log" 2>/dev/null || true
+	exit 1
 fi
-echo "FAIL: $peak > $CAP"
-exit 1
+if [ "$peak" -eq 0 ]; then
+	echo "FAIL: no local slot was ever taken, so the cap was not exercised ($local_routes local route(s))."
+	echo "      Every route spilled to cloud; check catalog.local and that LM Studio is up."
+	grep -h "route result" "$DIR"/debug-*.log 2>/dev/null | head -3 || true
+	exit 1
+fi
+if [ "$peak" -gt "$CAP" ]; then
+	echo "FAIL: peak $peak > cap $CAP"
+	exit 1
+fi
+if [ "$status" -ne 0 ]; then
+	echo "FAIL: at least one pi process exited non-zero"
+	grep -h -i "error" "$DIR"/pi-*.log 2>/dev/null | head -5 || true
+	exit 1
+fi
+echo "PASS: cap held"
