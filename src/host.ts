@@ -13,11 +13,10 @@
  *     loaded models must not make the governor believe it enforced a ceiling.
  *   - `chat()` is the floor: every host can answer a classifier prompt.
  */
-import type { LmStudioConfig } from "./types.ts";
+import type { HostKind, LoadedInstance, LmStudioConfig, RouterConfig } from "./types.ts";
 import { LmStudioHost } from "./lmstudio.ts";
 import { OllamaHost } from "./ollama.ts";
 import { OpenAiHost } from "./openai-host.ts";
-import type { HostKind, RouterConfig } from "./types.ts";
 
 /** What a host can actually do. Capability flags are read at routing time. */
 export interface HostCapabilities {
@@ -47,6 +46,12 @@ export interface HostModel {
 export interface HostInstance {
 	id: string;
 	remaining_ttl_seconds?: number;
+	/**
+	 * Per-instance runtime config, when the host reports one. LM Studio exposes the model's real
+	 * `physical_batch_size` here, which is what the decision-model trim reads (#50); hosts that
+	 * report nothing simply omit it.
+	 */
+	config?: NonNullable<LoadedInstance["config"]>;
 }
 
 export interface HostChatOptions {
@@ -78,6 +83,15 @@ export interface LocalHost {
 		questions: Record<string, { type: string } & Record<string, unknown>>,
 		options?: { signal?: AbortSignal },
 	): Promise<{ answers: Record<string, SystemOneAnswer>; errorMessage?: string }>;
+	/**
+	 * The model's real per-forward-pass token limit, when the host reports one (#50).
+	 *
+	 * Decision models answer in a single forward pass, so this is the ceiling on the prompt
+	 * they can accept at all. Callers fall back to a conservative default when it is absent,
+	 * which is why this is optional rather than a capability flag: a host that cannot report
+	 * it is not broken, it just cannot be asked this particular question.
+	 */
+	physicalBatchSize?(modelKey: string): Promise<number | undefined>;
 }
 
 export interface SystemOneAnswer {

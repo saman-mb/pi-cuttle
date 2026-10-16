@@ -3,6 +3,28 @@
 All notable changes to this project. Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Decision-model classifiers are no longer bypassed silently** (#50). `classifier.stateChars`
+  defaults to 16000, but a decision model answers in a single forward pass and LM Studio
+  evaluates the whole prompt in one physical batch (512 tokens by default, not settable over
+  REST). Anything longer was rejected, and the turn fell back to the regex heuristic without a
+  signal. The decision path now trims its state to the model's real batch capacity, retries once
+  at half size if the model rejects the prompt, logs trims and failures, and reports the
+  effective capacity in `/router doctor`. The `stateChars` default is unchanged: chat and cloud
+  classifiers have no single-pass batch limit.
+- **The documented classifier examples point at a model that loads** (#51). `decision-2.0-kai-0.6b`
+  fails to load on current LM Studio and `openjev-2b` does not exist; README, `docs/CONFIG.md`
+  and the example config now use `lmstudio/vllm-d3-nano`, and both docs state the id must be a
+  `key` from `GET /api/v1/models` and that `/router doctor` verifies it.
+
+### Added
+
+- `PI_MODEL_ROUTER_DEBUG` is now documented. Set it to a file path to log routing decisions and
+  any classifier trim or failure; it is the only turn-level record that the classifier fell back.
+
 ## [0.1.0] — 2026-10-16
 
 First tagged release. The router works end to end on LM Studio, with ollama and any

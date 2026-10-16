@@ -71,6 +71,29 @@ export class LmStudioHost implements LocalHost {
 			.map((m) => ({ key: m.key, instances: m.loaded_instances ?? [] }));
 	}
 
+	/**
+	 * The loaded instance for a bare model id, or `undefined` when the model is not loaded.
+	 * Used to read a decision model's real `physical_batch_size` (#50); best-effort, so an
+	 * unreachable server reads as "not loaded" rather than failing the caller.
+	 */
+	async loadedInstance(modelKey: string): Promise<LoadedInstance | undefined> {
+		try {
+			const models = await this.loaded();
+			return models.find((m) => m.key === modelKey)?.instances[0];
+		} catch {
+			return undefined;
+		}
+	}
+
+	/**
+	 * The loaded model's `physical_batch_size` (#50). LM Studio reports it per loaded instance
+	 * and does not let REST raise it, so it is read, not configured. `undefined` when the model
+	 * is not loaded (the catalog entry omits batch fields entirely).
+	 */
+	async physicalBatchSize(modelKey: string): Promise<number | undefined> {
+		return (await this.loadedInstance(modelKey))?.config?.physical_batch_size;
+	}
+
 	async load(modelKey: string, options: Record<string, unknown> = {}): Promise<void> {
 		await this.request<unknown>("/api/v1/models/load", {
 			method: "POST",

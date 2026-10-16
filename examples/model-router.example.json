@@ -1,6 +1,6 @@
 {
   "classifier": {
-    "model": "lmstudio/openjev-2b",
+    "model": "lmstudio/vllm-d3-nano",
     "fallback": "heuristic",
     "timeoutMs": 4000,
     "stateChars": 16000
