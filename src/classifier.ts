@@ -138,6 +138,9 @@ export const DECISION_CHARS_PER_TOKEN = 5;
 /** Smallest state we will send a decision model; below this a retry cannot help. */
 export const MIN_DECISION_STATE_CHARS = 256;
 
+/** Budget multiplier for a single retry after a classifier call times out (#63). */
+const COLD_START_RETRY_MULTIPLIER = 2;
+
 /**
  * Characters of user prompt a decision model can take in one physical batch, after the fixed
  * wrapper overhead. Pure and exported so `/cuttle doctor` can report it (#50).
@@ -154,6 +157,15 @@ export function decisionStateBudget(physicalBatchSize = DEFAULT_PHYSICAL_BATCH_T
 /** True when an error is the decision model's single-batch limit rejecting the prompt (#50). */
 export function isBatchLimitError(message: string | undefined): boolean {
 	return /too large to process|batch size|physical_batch/i.test(message ?? "");
+}
+
+/**
+ * A first call to a decision model that has just been loaded — or that is being loaded alongside
+ * the session-start warm target — can exceed the interactive budget even though the model itself
+ * answers in about a second once warm (#63).
+ */
+export function isTimeoutError(message: string | undefined): boolean {
+	return /aborted due to timeout|timed out|timeout/i.test(message ?? "");
 }
 
 /**
@@ -208,6 +220,19 @@ async function systemOneWithRetry(
 		return await systemOne(id, { prompt: state }, COMPLEXITY_QUESTIONS, { signal: AbortSignal.timeout(timeoutMs) });
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
+		if (isTimeoutError(message)) {
+			// #63: the session-start preload loads the warm target concurrently with the classifier, and
+			// a decision model's first call after a load is slower than a warm one. On the default budget
+			// the first call of a cold session times out and the turn falls back to the heuristic — the
+			// feature this package exists to provide. One retry at double the budget buys that verdict
+			// back; with `reclassify: session` this costs at most one wait per session, and a second
+			// timeout is reported exactly as before.
+			const retryBudget = timeoutMs * COLD_START_RETRY_MULTIPLIER;
+			log?.(`classifier: ${message}; retrying once with ${retryBudget}ms`);
+			return await systemOne(id, { prompt: state }, COMPLEXITY_QUESTIONS, {
+				signal: AbortSignal.timeout(retryBudget),
+			});
+		}
 		const shrunk = Math.floor(state.length / 2);
 		if (!isBatchLimitError(message) || shrunk < MIN_DECISION_STATE_CHARS) throw error;
 		log?.(`classifier: batch limit at ${state.length} chars (${message}); retrying with ${shrunk}`);

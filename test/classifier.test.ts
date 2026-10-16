@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { decideTier, applyPolicy, heuristicScore, splitRef, decisionStateBudget, detectPhysicalBatchSize, isBatchLimitError } from "../src/classifier.ts";
+import { decideTier, applyPolicy, heuristicScore, splitRef, decisionStateBudget, detectPhysicalBatchSize, isBatchLimitError, isTimeoutError } from "../src/classifier.ts";
 import { DEFAULTS } from "../src/config.ts";
 import type { LocalHost } from "../src/host.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -354,4 +354,54 @@ test("decisionStateBudget treats a zero or non-finite batch as unknown, not as a
 	assert.equal(decisionStateBudget(Number.NaN), decisionStateBudget());
 	assert.equal(decisionStateBudget(Number.POSITIVE_INFINITY), decisionStateBudget());
 	assert.equal(decisionStateBudget(100), 256, "a real but tiny batch still floors at the minimum");
+});
+
+test("isTimeoutError matches the abort signal's message, not batch-limit text (#63)", () => {
+	assert.equal(isTimeoutError("The operation was aborted due to timeout"), true);
+	assert.equal(isTimeoutError("input (2352 tokens) is too large to process. current batch size: 512"), false);
+	assert.equal(isTimeoutError(undefined), false);
+});
+
+test("a classifier timeout is retried once and the verdict is used (#63)", async () => {
+	// The cold-session case: the model loads, but the first call loses the budget to the warm
+	// target loading alongside it. Without the retry the turn silently falls back to the heuristic.
+	let calls = 0;
+	const localHost = fakeHost({
+		modelType: async () => "decision",
+		systemOne: async () => {
+			calls += 1;
+			if (calls === 1) throw new Error("The operation was aborted due to timeout");
+			return { answers: { complexity: { type: "choice", probabilities: { standard: 0.2, complex: 0.8 } } } };
+		},
+	});
+	const logs: string[] = [];
+	const d = await decideTier({
+		config: { ...DEFAULTS, classifier: { ...DEFAULTS.classifier, model: "lmstudio/cold", timeoutMs: 1000 } },
+		prompt: "refactor the architecture across the codebase",
+		ctx,
+		host: localHost,
+		log: (m) => logs.push(m),
+	});
+	assert.equal(calls, 2, "exactly one retry");
+	assert.equal(d.source, "classifier", "the retry's verdict is used, not the heuristic");
+	assert.equal(d.tier, "cloud");
+	assert.match(logs.join("\n"), /retrying once with 2000ms/);
+});
+
+test("a classifier that times out twice still falls back per config (#63)", async () => {
+	const localHost = fakeHost({
+		modelType: async () => "decision",
+		systemOne: async () => {
+			throw new Error("The operation was aborted due to timeout");
+		},
+	});
+	const d = await decideTier({
+		config: { ...DEFAULTS, classifier: { ...DEFAULTS.classifier, model: "lmstudio/cold", timeoutMs: 1000 } },
+		prompt: "rename a variable",
+		ctx,
+		host: localHost,
+	});
+	assert.equal(d.source, "heuristic");
+	assert.equal(d.tier, "local");
+	assert.match(d.reason, /classifier failed/);
 });
