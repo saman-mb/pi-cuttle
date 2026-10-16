@@ -58,6 +58,21 @@ export function detectPhase(messages: readonly Message[]): "implementation" | un
 	return undefined;
 }
 
+/**
+ * Count struggle evidence in the recent conversation (#41).
+ *
+ * Two signals the turn loop already delivers: tool results marked `isError`, and
+ * assistant messages that ended with `stopReason: "error"`. Pure and throw-free.
+ */
+export function struggleSignals(messages: readonly Message[], window: number): { errors: number } {
+	let errors = 0;
+	for (const message of messages.slice(-Math.max(1, window))) {
+		if (message.role === "toolResult" && message.isError === true) errors += 1;
+		else if (message.role === "assistant" && message.stopReason === "error") errors += 1;
+	}
+	return { errors };
+}
+
 /** Providers whose models are served by the *local* host, so the classifier call is free. */
 /** True when `provider` names a local host token, so the classifier call is free. */
 export function isLocalProvider(provider: string): boolean {

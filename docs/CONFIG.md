@@ -65,6 +65,18 @@ Refs are `provider/model`; the model part may contain slashes
 | `threshold` | number 0–1 | `0.5` | Complexity at or above this routes cloud. |
 | `phase.plan` / `phase.implement` | `"local"` \| `"cloud"` | `cloud` / `local` | Tier per phase when `mode: "phase"`. |
 | `reclassify` | `"session"` \| `"turn"` | `"session"` | `session` classifies once and stays; `turn` re-classifies each user turn. |
+| `escalate.enabled` | boolean | `true` | Allow a local session to escalate to cloud on evidence of struggle. |
+| `escalate.toolErrors` | number | `2` | Error tool-results (or errored turns) in the window that trigger escalation. |
+| `escalate.window` | number | `8` | Recent messages scanned for struggle signals. |
+| `escalate.cleanTurns` | number | `3` | Consecutive clean user turns before a struggle-escalated session steps back down. |
+
+**Escalation is why "cheap without sacrificing accuracy" holds.** A session-sticky local
+decision is cheap and cache-friendly, but a local model can start flailing on a turn that
+outgrew it. The router watches the conversation it already receives — tool results marked
+`isError` and turns that ended in an error — and moves the session to cloud mid-turn when
+the evidence says so. Coming back down takes `cleanTurns` consecutive clean user turns, so
+it does not oscillate. A failure-driven escalation (#37) instead re-decides on the very
+next user turn, because the cause was the environment, not the work.
 
 ## `local`
 

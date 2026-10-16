@@ -19,7 +19,13 @@ export const DEFAULTS: RouterConfig = {
 	autoSelect: true,
 	classifier: { fallback: "heuristic", timeoutMs: 4000, stateChars: 16_000 },
 	catalog: { local: [], cloud: [] },
-	policy: { mode: "complexity", threshold: 0.5, phase: { plan: "cloud", implement: "local" }, reclassify: "session" },
+	policy: {
+		mode: "complexity",
+		threshold: 0.5,
+		phase: { plan: "cloud", implement: "local" },
+		reclassify: "session",
+		escalate: { enabled: true, toolErrors: 2, window: 8, cleanTurns: 3 },
+	},
 	local: {
 		maxConcurrent: 1,
 		maxConcurrentPerModel: 1,
@@ -62,6 +68,17 @@ function mergeSection<T extends object>(base: T, patch: unknown): T {
 	return { ...base, ...(patch as Partial<T>) };
 }
 
+/** Merge the `policy` section, keeping nested `phase` and `escalate` defaults. */
+function mergePolicy(base: RouterConfig["policy"], patch: unknown): RouterConfig["policy"] {
+	if (!isRecord(patch)) return base;
+	return {
+		...base,
+		...patch,
+		phase: isRecord(patch.phase) ? { ...base.phase, ...patch.phase } : base.phase,
+		escalate: isRecord(patch.escalate) ? { ...base.escalate, ...patch.escalate } : base.escalate,
+	} as RouterConfig["policy"];
+}
+
 /** Apply one parsed JSON object over a config, section by section. Exported for tests. */
 export function applyOverrides(config: RouterConfig, parsed: unknown): RouterConfig {
 	if (!isRecord(parsed)) return config;
@@ -72,7 +89,7 @@ export function applyOverrides(config: RouterConfig, parsed: unknown): RouterCon
 		autoSelect: typeof parsed.autoSelect === "boolean" ? parsed.autoSelect : config.autoSelect,
 		classifier: mergeSection(config.classifier, parsed.classifier),
 		catalog: mergeSection(config.catalog, parsed.catalog),
-		policy: mergeSection(config.policy, parsed.policy),
+		policy: mergePolicy(config.policy, parsed.policy),
 		local: mergeSection(config.local, parsed.local),
 		lmstudio: mergeSection(config.lmstudio, parsed.lmstudio),
 		ollama: mergeSection(config.ollama, parsed.ollama),

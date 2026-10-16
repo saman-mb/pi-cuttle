@@ -213,3 +213,88 @@ test("a slot is released when the local target cannot be resolved (#39)", async 
 	);
 	assert.deepEqual(released, ["local-model"], "acquired slot given back on resolve failure");
 });
+
+const TOOL_ERRORS = [
+	{ role: "user", content: [{ type: "text", text: "fix the failing test" }] },
+	{ role: "assistant", content: [{ type: "toolCall", id: "t1", name: "edit", arguments: {} }] },
+	{ role: "toolResult", toolCallId: "t1", toolName: "edit", content: [{ type: "text", text: "no match" }], isError: true, timestamp: 0 },
+	{ role: "assistant", content: [{ type: "toolCall", id: "t2", name: "edit", arguments: {} }] },
+	{ role: "toolResult", toolCallId: "t2", toolName: "edit", content: [{ type: "text", text: "no match" }], isError: true, timestamp: 0 },
+] as unknown as Message[];
+
+test("struggleSignals counts error tool results and errored assistant turns (#41)", async () => {
+	const { struggleSignals } = await import("../src/classifier.ts");
+	assert.equal(struggleSignals(TOOL_ERRORS, 8).errors, 2);
+	assert.equal(struggleSignals(USER, 8).errors, 0);
+	const errored = [{ role: "assistant", content: [], stopReason: "error" }] as unknown as Message[];
+	assert.equal(struggleSignals(errored, 8).errors, 1);
+});
+
+test("a flailing local session escalates to cloud mid-turn (#41)", async () => {
+	const cfg = config();
+	const { rt } = runtime(cfg);
+	const state = {
+		tier: "local" as const,
+		modelId: "lmstudio/local-model",
+		phase: "implementation" as const,
+		decision: { source: "classifier" as const, reason: "prior" },
+	};
+	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "continuation", state, messages: TOOL_ERRORS } as never, ctxWith());
+	assert.equal(route.state?.tier, "cloud");
+	assert.equal(route.state?.escalatedFrom, "local");
+	assert.equal(route.state?.cleanTurns, 0);
+	assert.match(route.state?.decision.reason ?? "", /escalated local->cloud: 2 error/);
+});
+
+test("escalated sessions step back down after clean user turns (#41)", async () => {
+	const cfg = config();
+	const { rt } = runtime(cfg);
+	const escalated = {
+		tier: "cloud" as const,
+		modelId: "cloud/big",
+		phase: "implementation" as const,
+		decision: { source: "heuristic" as const, reason: "escalated" },
+		escalatedFrom: "local" as const,
+		cleanTurns: 2,
+	};
+	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "user", state: escalated } as never, ctxWith());
+	assert.equal(route.state?.tier, "local", "third clean turn re-classifies back to local");
+	assert.equal(route.state?.escalatedFrom, undefined);
+});
+
+test("clean user turns accumulate while escalated (#41)", async () => {
+	const cfg = config();
+	const { rt } = runtime(cfg);
+	const escalated = {
+		tier: "cloud" as const,
+		modelId: "cloud/big",
+		phase: "implementation" as const,
+		decision: { source: "heuristic" as const, reason: "escalated" },
+		escalatedFrom: "local" as const,
+		cleanTurns: 0,
+	};
+	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "user", state: escalated } as never, ctxWith());
+	assert.equal(route.state?.tier, "cloud");
+	assert.equal(route.state?.cleanTurns, 1, "streak persists for the next turn");
+});
+
+test("an error resets the clean streak and keeps the session on cloud (#41)", async () => {
+	const cfg = config();
+	const { rt } = runtime(cfg);
+	const escalated = {
+		tier: "cloud" as const,
+		modelId: "cloud/big",
+		phase: "implementation" as const,
+		decision: { source: "heuristic" as const, reason: "escalated" },
+		escalatedFrom: "local" as const,
+		cleanTurns: 2,
+	};
+	const route = await routeRequest(
+		rt,
+		"auto",
+		{ ...baseReq, reason: "user", state: escalated, messages: TOOL_ERRORS } as never,
+		ctxWith(),
+	);
+	assert.equal(route.state?.tier, "cloud");
+	assert.equal(route.state?.cleanTurns, 0);
+});

@@ -18,7 +18,7 @@
 import type { Message } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ModelRoute, ModelRouteRequest } from "@earendil-works/pi-coding-agent";
 
-import { applyPolicy, decideTier, detectPhase, splitRef } from "./classifier.ts";
+import { applyPolicy, decideTier, detectPhase, splitRef, struggleSignals } from "./classifier.ts";
 import type { LocalGovernor } from "./governor.ts";
 import type { LocalHost } from "./host.ts";
 import type { Reservation, RouterConfig, RouterFlavor, RouterState, Tier } from "./types.ts";
@@ -171,9 +171,56 @@ export async function routeRequest(
 	// #37: a session degraded by a local failure re-decides on the next user turn, so one
 	// transient hiccup does not pin it to cloud prices for good. Everything else stays sticky.
 	const recovering = state?.degradedFrom !== undefined && request.reason === "user";
+	// #41: struggle-based escalation. Evidence is read from the conversation, so a local
+	// session that is flailing moves up; a cloud session that came up this way steps back
+	// down after `cleanTurns` clean user turns. Hysteresis: both transitions need evidence.
+	const escalateCfg = rt.config.policy.escalate;
+	const signals = escalateCfg?.enabled ? struggleSignals(request.messages, escalateCfg.window) : { errors: 0 };
+	const cleanStreak = (state?.cleanTurns ?? 0) + (request.reason === "user" && signals.errors === 0 ? 1 : 0);
+	const deescalating =
+		escalateCfg?.enabled === true &&
+		state?.escalatedFrom !== undefined &&
+		request.reason === "user" &&
+		signals.errors === 0 &&
+		cleanStreak >= escalateCfg.cleanTurns;
 	// Sticky within a session unless policy says re-classify every user turn (#12).
-	const reclassify = (rt.config.policy.reclassify === "turn" || recovering) && request.reason === "user";
+	const reclassify = (rt.config.policy.reclassify === "turn" || recovering || deescalating) && request.reason === "user";
 	if (state && !reclassify) {
+		// #41: a local session that is visibly flailing escalates to cloud mid-turn.
+		if (escalateCfg?.enabled && state.tier === "local" && signals.errors >= escalateCfg.toolErrors) {
+			const cloudRef = pickCloud(rt.config);
+			if (cloudRef) {
+				rt.governor.releaseOne(splitRef(pickLocal(rt.config, flavor, rt.sizes) ?? "")?.id ?? "");
+				rt.log?.(`route escalate local->cloud errors=${signals.errors} window=${escalateCfg.window}`);
+				const next: RouterState = {
+					tier: "cloud",
+					modelId: cloudRef,
+					phase: state.phase,
+					decision: {
+						...state.decision,
+						reason: `escalated local->cloud: ${signals.errors} error(s) in last ${escalateCfg.window} messages`,
+					},
+					escalatedFrom: "local",
+					cleanTurns: 0,
+				};
+				return resolveModel(ctx, cloudRef, thinking, next);
+			}
+		}
+
+		// #41: while escalated, count clean user turns; an error resets the streak.
+		if (state.tier === "cloud" && state.escalatedFrom && request.reason === "user") {
+			const nextClean = signals.errors === 0 ? cleanStreak : 0;
+			if (nextClean !== (state.cleanTurns ?? 0)) {
+				const next: RouterState = { ...state, cleanTurns: nextClean };
+				const cloudRef = pickCloud(rt.config);
+				return resolveModel(ctx, cloudRef, thinking, next);
+			}
+			if (signals.errors > 0 && (state.cleanTurns ?? 0) !== 0) {
+				const next: RouterState = { ...state, cleanTurns: 0 };
+				return resolveModel(ctx, pickCloud(rt.config), thinking, next);
+			}
+		}
+
 		// #36: planning ends at the first file-mutating tool call. Flip the phase and, under
 		// phase policy, let the tier follow it — the one place a sticky session changes tier
 		// without evidence of struggle.

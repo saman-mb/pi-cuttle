@@ -37,6 +37,18 @@ export interface CatalogConfig {
 
 export type PolicyMode = "complexity" | "phase" | "cost";
 
+/** Struggle-based escalation (#41): what counts as flailing, and when to step back down. */
+export interface EscalationConfig {
+	/** Allow a local session to escalate to cloud on evidence of struggle. */
+	enabled: boolean;
+	/** Error results in the recent window that trigger escalation. */
+	toolErrors: number;
+	/** How many recent messages are scanned for struggle signals. */
+	window: number;
+	/** Consecutive clean user turns on the cloud side before re-classifying back. */
+	cleanTurns: number;
+}
+
 export interface PolicyConfig {
 	mode: PolicyMode;
 	/** Complexity below this routes local. Used when `mode` is `complexity`. */
@@ -45,6 +57,8 @@ export interface PolicyConfig {
 	phase: { plan: Tier; implement: Tier };
 	/** `session` classifies once per session; `turn` re-classifies on each user turn. */
 	reclassify: "session" | "turn";
+	/** Struggle-based escalation (#41). */
+	escalate: EscalationConfig;
 }
 
 export interface LocalConfig {
@@ -107,6 +121,10 @@ export interface RouterState {
 	phase: "planning" | "implementation";
 	/** Set when a local failure escalated this session; the next user turn re-decides (#37). */
 	degradedFrom?: Tier;
+	/** Set when struggle escalated a local session to cloud; drives the step back down (#41). */
+	escalatedFrom?: Tier;
+	/** Consecutive clean user turns since an escalation (#41). */
+	cleanTurns?: number;
 	decision: {
 		source: "classifier" | "heuristic" | "pin";
 		score?: number;

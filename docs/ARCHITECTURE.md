@@ -35,7 +35,10 @@ or the `pi-subagents` package.
 
 1. **Decide once per session (default), not per request.** Continuations, retries,
    and tool-result follow-ups keep the previous model, preserving the prompt cache.
-   `policy.reclassify: "turn"` opts into per-turn re-classification.
+   `policy.reclassify: "turn"` opts into per-turn re-classification. Two evidence-driven
+   exceptions keep the decision honest: struggle escalation (#41) moves a flailing local
+   session to cloud mid-turn and steps back down after `cleanTurns` clean user turns;
+   a failure-driven escalation (#37) re-decides on the next user turn.
 2. **`route()` is self-contained.** It may call `ctx.modelRegistry`, the configured
    local host over HTTP, and the filesystem. It may not rely on another extension's hooks: a
    foreground subagent child shares the parent process but does not reload ambient
