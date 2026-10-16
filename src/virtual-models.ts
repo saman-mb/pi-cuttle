@@ -129,12 +129,22 @@ async function ensureLocalSlot(
 ): Promise<{ spill?: string; reservation?: Reservation; ref?: string }> {
 	const candidates = localCandidates(rt.config, flavor, rt.sizes);
 	if (candidates.length === 0) return { spill: "no local model configured" };
+	const unresolvable: string[] = [];
 	let sawContextOverflow = false;
+	let sawCapacity = false;
 	for (const ref of candidates) {
 		const parsed = splitRef(ref);
-		if (!parsed) continue;
+		if (!parsed) {
+			unresolvable.push(ref);
+			continue;
+		}
 		const model = ctx.modelRegistry.find(parsed.provider, parsed.id);
-		if (!model) continue; // #45: try the next candidate instead of throwing
+		if (!model) {
+			// #45: try the next candidate instead of throwing. #58: remember why, so the spill reason
+			// can name the real cause rather than blaming capacity.
+			unresolvable.push(ref);
+			continue;
+		}
 		if (!fitsWindow(ctx, model.contextWindow ?? 0)) {
 			sawContextOverflow = true;
 			continue;
@@ -145,8 +155,18 @@ async function ensureLocalSlot(
 		if (rt.config.local.maxLoadedModels > 0) await rt.governor.enforceLoadedCeiling(bareKey);
 		const reservation = await rt.governor.acquire(bareKey, { sessionId, flavor });
 		if (reservation) return { reservation, ref };
+		sawCapacity = true;
 	}
-	return { spill: sawContextOverflow ? "context exceeds local window" : "local full, spilled to cloud" };
+	// #58: report what actually happened. A model missing from pi's registry used to be reported
+	// as "local full", which points the user at concurrency settings for what is usually a typo
+	// in `catalog.local` — while every turn quietly bills cloud instead.
+	const reasons: string[] = [];
+	if (unresolvable.length > 0) {
+		reasons.push(`local model not in pi's catalog: ${unresolvable.join(", ")} (check catalog.local)`);
+	}
+	if (sawContextOverflow) reasons.push("context exceeds local window");
+	if (sawCapacity) reasons.push("local full");
+	return { spill: reasons.length > 0 ? `${reasons.join("; ")}, spilled to cloud` : "spilled to cloud" };
 }
 
 /** Can the whole conversation fit a model's window? (#15) */

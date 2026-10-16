@@ -213,6 +213,31 @@ test("a missing local candidate spills to cloud instead of throwing (#45)", asyn
 	assert.match(route.state?.decision.reason ?? "", /spilled to cloud/);
 });
 
+test("a candidate missing from the registry is named, not blamed on capacity (#58)", async () => {
+	const cfg = config();
+	const { rt } = runtime(cfg);
+	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "user" } as never, ctxWith({ missingLocal: true }));
+	const reason = route.state?.decision.reason ?? "";
+	assert.equal(route.model.provider, "cloud");
+	assert.match(reason, /not in pi's catalog/, "the real cause must be named");
+	assert.match(reason, /lmstudio\/local-model/, "the offending ref must be named");
+	assert.match(reason, /catalog\.local/, "the user must be pointed at the field to fix");
+	assert.doesNotMatch(reason, /local full/, "capacity is not the cause here");
+});
+
+test("a missing candidate and a saturated one are both reported (#58)", async () => {
+	const cfg = config({ catalog: { local: ["lmstudio/missing-model", "lmstudio/local-model"], cloud: ["cloud/big"] } });
+	const { rt } = runtime(cfg, false); // governor refuses the second candidate
+	const ctx = ctxWith();
+	const original = ctx.modelRegistry.find.bind(ctx.modelRegistry);
+	(ctx.modelRegistry as unknown as { find: typeof original }).find = (provider: string, id: string) =>
+		id === "missing-model" ? undefined : original(provider, id);
+	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "user" } as never, ctx);
+	const reason = route.state?.decision.reason ?? "";
+	assert.match(reason, /not in pi's catalog/, "the missing candidate is still named");
+	assert.match(reason, /local full/, "and the saturated one too");
+});
+
 test("the second local candidate is used when the first is unresolvable (#45)", async () => {
 	const cfg = config({ catalog: { local: ["lmstudio/missing-model", "lmstudio/local-model"], cloud: ["cloud/big"] } });
 	const { rt, acquired } = runtime(cfg);
