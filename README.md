@@ -83,9 +83,20 @@ lmstudio/… (free)        cloud/… (metered)
 pi install npm:pi-cuttle
 # or from git:
 pi install git:github.com/saman-mb/pi-cuttle
-# or try a checkout without installing:
+```
+
+To run a checkout instead of installing it, use `-e` — but only when the package is **not**
+already installed. `pi` loads both, and the second registration of the `--cuttle-force` flag is
+rejected, which stops the extension loading at all. Remove an installed copy first:
+
+```bash
+pi remove git:github.com/saman-mb/pi-cuttle   # or: pi remove npm:pi-cuttle
 pi -e /path/to/pi-cuttle
 ```
+
+pi's error message suggests `pi -ne` for that conflict. Do not use it here: `-ne` disables
+built-in extensions, which removes the LM Studio provider, so no local model can be resolved
+and every turn spills to cloud.
 
 ## Configuration
 
@@ -154,6 +165,11 @@ Interactive editing (persists to the user config file):
 ```
 
 One-off override: `pi --cuttle-force=cloud`.
+
+The `/cuttle` commands report through the terminal UI, and pi's print and JSON modes do not
+expose command output — `pi -p "/cuttle stats"` exits 0 having printed nothing. For headless
+and CI use, the channels that do work are the decision ledger (what actually happened) and
+`PI_CUTTLE_DEBUG` (why each turn chose what it did).
 
 ## Subagents
 

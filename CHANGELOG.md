@@ -27,8 +27,24 @@ versions follow [SemVer](https://semver.org/).
 - The README now states the relationship to [Cuttle](https://github.com/saman-mb/cuttle) — this
   extension is standalone and requires no Cuttle or Python install — and `pi.image` is set so
   the package shows the Cuttle mark in the pi package gallery.
+- The README no longer offers `pi -e <checkout>` as an alternative to installing without saying
+  that an installed copy must be removed first, and no longer repeats pi's `pi -ne` hint for
+  that conflict without noting that `-ne` removes local model providers (#60). It also states
+  that `/cuttle` commands are terminal-UI only, and names the channels that work headless (#61).
 
 ### Fixed
+
+- **The decision-model classifier never ran on LM Studio** (#57). `decideTier` detached
+  `host.systemOne` from its host, so `this.request` threw on the first call and every turn fell
+  back to the regex heuristic — silently, because the fallback is graceful and looks correct.
+  Introduced in 52a661b and present in v0.1.0. The method is now bound at the single place it
+  is detached, and the regression test uses a class method that reads `this`, which the previous
+  arrow-function fakes could never fail.
+- **A local model missing from pi's registry was reported as `local full` and quietly billed
+  cloud** (#58). A typo in `catalog.local`, an undownloaded model, or a local server that has not
+  started all produced the same misleading capacity reason while every turn went to paid cloud.
+  The spill reason is now built from what actually happened, naming the offending ref and
+  pointing at `catalog.local`.
 
 - **Decision-model classifiers are no longer bypassed silently** (#50). `classifier.stateChars`
   defaults to 16000, but a decision model answers in a single forward pass and LM Studio
