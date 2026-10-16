@@ -33,6 +33,8 @@ export interface RouterRuntime {
 	getForced?: () => Tier | undefined;
 	/** Local model key -> size in bytes, for `router/fast-local` ordering (#19). */
 	sizes: Map<string, number>;
+	/** Optional debug logger (set from `PI_MODEL_ROUTER_DEBUG`). */
+	log?: (message: string) => void;
 	/** Refresh `sizes` from LM Studio; best-effort. */
 	refreshSizes?: () => Promise<void>;
 }

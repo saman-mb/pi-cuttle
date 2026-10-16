@@ -68,7 +68,7 @@ test("applyPolicy: cost biases local and only a strong signal escapes", () => {
 });
 
 test("applyPolicy: phase ignores the score", () => {
-	const cfg = { ...DEFAULTS, policy: { ...DEFAULTS.policy, mode: "phase" as const, phase: { plan: "cloud", implement: "local" } } };
+	const cfg = { ...DEFAULTS, policy: { ...DEFAULTS.policy, mode: "phase" as const, phase: { plan: "cloud" as const, implement: "local" as const } } };
 	const score = { tier: "local" as const, score: 0.1, source: "classifier" as const, reason: "x" };
 	assert.equal(applyPolicy(cfg, score, "planning").tier, "cloud");
 	assert.equal(applyPolicy(cfg, score, "implementation").tier, "local");

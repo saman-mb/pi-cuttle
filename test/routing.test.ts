@@ -48,7 +48,7 @@ test("sticky: a continuation keeps the previous state without re-classifying", a
 	const cfg = config();
 	const { rt, acquired } = runtime(cfg);
 	const state = { tier: "local" as const, modelId: "lmstudio/local-model", phase: "planning" as const, decision: { source: "heuristic" as const, reason: "prior" } };
-	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "continuation", state }, ctxWith());
+	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "continuation" as const, state } as never, ctxWith());
 	assert.equal(route.model.id, "local-model");
 	assert.equal(route.state, state, "state object is reused so pi keeps it");
 	assert.equal(acquired.length, 0, "no new slot on a continuation");
@@ -60,7 +60,7 @@ test("reclassify=turn re-decides on each user turn", async () => {
 	const priorState = { tier: "local" as const, modelId: "lmstudio/local-model", phase: "planning" as const, decision: { source: "heuristic" as const, reason: "prior" } };
 	// A cloud-hinting prompt, so the new decision differs from the prior state.
 	const messages = [{ role: "user", content: [{ type: "text", text: "refactor the architecture across the codebase" }] }] as unknown as Message[];
-	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "user", state: priorState, messages }, ctxWith());
+	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "user", state: priorState, messages } as never, ctxWith());
 	assert.equal(route.state?.tier, "cloud");
 });
 
@@ -83,7 +83,7 @@ test("retry after a local failure switches to cloud", async () => {
 test("context guard spills to cloud when the prompt exceeds the local window", async () => {
 	const cfg = config();
 	const { rt } = runtime(cfg);
-	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "user" }, ctxWith({ window: 1000, tokens: 999 }));
+	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "user" as const } as never, ctxWith({ window: 1000, tokens: 999 }));
 	assert.equal(route.model.provider, "cloud");
 	assert.match(route.state?.decision.reason ?? "", /context exceeds local window/);
 });
@@ -91,7 +91,7 @@ test("context guard spills to cloud when the prompt exceeds the local window", a
 test("local saturation spills to cloud", async () => {
 	const cfg = config();
 	const { rt } = runtime(cfg, false); // governor refuses
-	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "user" }, ctxWith());
+	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "user" as const } as never, ctxWith());
 	assert.equal(route.model.provider, "cloud");
 	assert.match(route.state?.decision.reason ?? "", /local full/);
 });
