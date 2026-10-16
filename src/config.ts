@@ -33,6 +33,8 @@ export const DEFAULTS: RouterConfig = {
 		onFull: "spill",
 		waitMs: 20_000,
 		idleUnloadMs: 300_000,
+		preload: true,
+		pinClassifier: true,
 		slotDir: join(homedir(), ".pi", "agent", "model-router", "slots"),
 		staleSlotMs: 300_000,
 	},

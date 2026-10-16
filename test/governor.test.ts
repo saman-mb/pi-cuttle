@@ -177,3 +177,23 @@ test("releaseOne matches by model key regardless of provider, false when nothing
 	assert.equal(gov.releaseOne("qwen3:8b"), true);
 	assert.equal(gov.live().length, 0);
 });
+
+test("a pinned model survives the loaded ceiling (#44)", async () => {
+	cfg = { ...cfg, maxLoadedModels: 1 };
+	const unloads: string[] = [];
+	const lm = {
+		capabilities: { canListLoaded: true, canLoadUnload: true, hasDecisionModels: true, hasModelSizes: true },
+		loaded: async () => [
+			{ key: "lmstudio/classifier", instances: [{ id: "lmstudio/classifier", remaining_ttl_seconds: 5 }] },
+			{ key: "lmstudio/old", instances: [{ id: "lmstudio/old", remaining_ttl_seconds: 10 }] },
+		],
+		unload: async (id: string) => void unloads.push(id),
+	} as unknown as LocalHost;
+	const gov = new LocalGovernor(cfg, lm);
+	gov.pin("lmstudio/classifier");
+	const unloaded = await gov.enforceLoadedCeiling("lmstudio/keep");
+	assert.deepEqual(unloaded, ["lmstudio/old"], "the evictable model goes, even though it has more TTL left");
+	assert.equal(unloads.includes("lmstudio/classifier"), false, "classifier never evicted");
+	assert.deepEqual((await gov.status()).pinnedKeys, ["lmstudio/classifier"]);
+	gov.unpin("lmstudio/classifier");
+});

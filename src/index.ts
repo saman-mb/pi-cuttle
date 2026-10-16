@@ -16,6 +16,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { appendFileSync } from "node:fs";
 
 import { loadConfig } from "./config.ts";
+import { isLocalProvider, splitRef } from "./classifier.ts";
 import { createHost } from "./host.ts";
 import { LocalGovernor } from "./governor.ts";
 import { registerRouterCommand } from "./commands.ts";
@@ -74,10 +75,28 @@ export default function modelRouter(pi: ExtensionAPI): void {
 	registerVirtualModels(pi, rt);
 	registerRouterCommand(pi, rt, loaded, telemetry);
 
-	// #24: select the router at session start. This is what makes routing the default for
-	// both the main agent and any child that loads this extension.
+	// #44: pin the local classifier against ceiling eviction and warm the local model
+	// while the user types their first prompt. Both are fire-and-forget so session start
+	// is never blocked by a model load.
 	pi.on("session_start", async (_event, ctx) => {
 		void rt.refreshSizes?.();
+		const classifierRef = rt.config.classifier.model;
+		const classifierParsed = classifierRef ? splitRef(classifierRef) : undefined;
+		if (classifierParsed && isLocalProvider(classifierParsed.provider) && rt.config.local.pinClassifier) {
+			governor.pin(classifierParsed.id);
+			log?.(`session_start pinned classifier ${classifierParsed.id}`);
+		}
+		if (rt.config.local.preload && host.capabilities.canLoadUnload) {
+			const warmTarget = rt.config.catalog.local[0];
+			for (const ref of [classifierRef, warmTarget]) {
+				const key = ref ? splitRef(ref)?.id : undefined;
+				if (!key) continue;
+				void host.load(key).then(
+					() => log?.(`preload ok ${key}`),
+					(error) => log?.(`preload failed ${key}: ${error instanceof Error ? error.message : String(error)}`),
+				);
+			}
+		}
 		log?.(`session_start autoSelect=${rt.config.autoSelect} explicit=${explicitModelRequested(process.argv)} current=${ctx.model?.provider}/${ctx.model?.id}`);
 		if (!rt.config.autoSelect) return;
 		if (explicitModelRequested(process.argv)) return;

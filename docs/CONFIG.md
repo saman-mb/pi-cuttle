@@ -90,6 +90,8 @@ Memory governance. See [ARCHITECTURE.md](ARCHITECTURE.md) for why this is filesy
 | `onFull` | `"spill"` \| `"wait"` | `"spill"` | Route to cloud immediately, or wait for a slot. |
 | `waitMs` | number | `20000` | Wait budget before spilling when `onFull: "wait"`. |
 | `idleUnloadMs` | number | `300000` | Reserved; LM Studio owns the TTL (see #27). |
+| `preload` | boolean | `true` | Warm the local model (and local classifier) at session start, fire-and-forget, so turn one is not a cold JIT load. |
+| `pinClassifier` | boolean | `true` | Protect the local classifier from `maxLoadedModels` eviction — evicting it just forces a reload next turn. |
 | `slotDir` | string | `~/.pi/agent/model-router/slots` | Where slot files live. `~` expands. |
 | `staleSlotMs` | number | `300000` | A slot older than this is reaped. |
 

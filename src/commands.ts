@@ -156,6 +156,7 @@ async function status(rt: RouterRuntime, loaded: LoadedConfig, ctx: ExtensionCom
 		`pin:      ${pinned ?? "auto"}`,
 		`local:    ${governor.slots.length}/${governor.localMax} slots used`,
 		`loaded:   ${governor.loadedModels.map((m) => m.key).join(", ") || "(none)"}`,
+		`pinned:   ${governor.pinnedKeys.join(", ") || "(none)"}`,
 		`config:   ${loaded.sources.join(" -> ") || "(defaults only)"}`,
 	];
 	for (const warning of loaded.warnings) lines.push(`warning:  ${warning}`);

@@ -76,6 +76,10 @@ export interface LocalConfig {
 	waitMs: number;
 	/** Ask LM Studio to unload idle instances after this long. 0 disables. */
 	idleUnloadMs: number;
+	/** Warm the local target model at session start so turn one is not cold (#44). */
+	preload: boolean;
+	/** Never evict the local classifier under the loaded ceiling (#44). */
+	pinClassifier: boolean;
 	/** Directory holding the cross-process slot files. `~` is expanded. */
 	slotDir: string;
 	/** A slot older than this is considered abandoned and reaped. */
@@ -181,6 +185,8 @@ export interface LmModel {
 export interface GovernorStatus {
 	slots: Reservation[];
 	localMax: number;
+	/** Model keys protected from ceiling eviction. */
+	pinnedKeys: string[];
 	loadedModels: { key: string; instances: LoadedInstance[] }[];
 	/** What the configured host can do; degraded hosts report fewer capabilities. */
 	capabilities: HostCapabilities;

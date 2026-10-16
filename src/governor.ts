@@ -49,6 +49,8 @@ export class LocalGovernor {
 	private readonly held = new Map<string, Reservation[]>();
 	private readonly cfg: LocalConfig;
 	private readonly host: LocalHost;
+	/** Models the ceiling must never evict (e.g. the local classifier, #44). */
+	private readonly pinned = new Set<string>();
 
 	constructor(cfg: LocalConfig, host: LocalHost) {
 		this.cfg = cfg;
@@ -168,6 +170,19 @@ export class LocalGovernor {
 		if (index >= 0) list.splice(index, 1);
 	}
 
+	/** Protect a model key from ceiling eviction (#44). */
+	pin(modelKey: string): void {
+		if (modelKey) this.pinned.add(modelKey);
+	}
+
+	unpin(modelKey: string): void {
+		this.pinned.delete(modelKey);
+	}
+
+	isPinned(modelKey: string): boolean {
+		return this.pinned.has(modelKey);
+	}
+
 	/** Release everything this process holds. Call on shutdown. */
 	releaseAll(): void {
 		for (const list of this.held.values()) for (const res of list) safeUnlink(res.file);
@@ -181,7 +196,13 @@ export class LocalGovernor {
 		} catch {
 			/* offline is a valid status */
 		}
-		return { slots: this.live(), localMax: this.cfg.maxConcurrent, loadedModels, capabilities: this.host.capabilities };
+		return {
+			slots: this.live(),
+			localMax: this.cfg.maxConcurrent,
+			loadedModels,
+			capabilities: this.host.capabilities,
+			pinnedKeys: [...this.pinned],
+		};
 	}
 
 	/**
@@ -197,7 +218,9 @@ export class LocalGovernor {
 		} catch {
 			return [];
 		}
-		const others = loaded.filter((m) => m.key !== keepKey);
+		// Pinned models (the classifier) are never victims; the ceiling is best-effort
+		// around them, because evicting the classifier just forces a reload next turn.
+		const others = loaded.filter((m) => m.key !== keepKey && !this.pinned.has(m.key));
 		// The target needs a slot of its own, so leave room for it whether or not it is
 		// currently loaded. Without keepKey this is a plain ceiling on everything loaded.
 		const allowedOthers = keepKey ? Math.max(0, this.cfg.maxLoadedModels - 1) : this.cfg.maxLoadedModels;
