@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 
-import { formatStats, Telemetry, type DecisionRecord } from "../src/telemetry.ts";
+import { formatStats, isPhysicalTurn, Telemetry, type DecisionRecord } from "../src/telemetry.ts";
 import type { TelemetryConfig } from "../src/types.ts";
 
 let dir: string;
@@ -90,4 +90,17 @@ test("a window with no records reports nothing to show", () => {
 	const t = new Telemetry({ ...cfg, path: join(dir, "missing.jsonl") }, []);
 	const out = formatStats(t.stats(7), cfg.baseline);
 	assert.match(out, /no decisions recorded/);
+});
+
+test("a turn attributed to the virtual provider is not recorded (#62)", () => {
+	// Routing that resolves no target comes back as provider "cuttle" with the virtual model id
+	// and no usage. Counting it as a cloud turn deflates the local share and the savings figure.
+	assert.equal(isPhysicalTurn({ provider: "cuttle", model: "auto" }), false);
+	assert.equal(isPhysicalTurn({ provider: undefined, model: "auto" }), false);
+	assert.equal(isPhysicalTurn({ provider: "", model: "auto" }), false);
+});
+
+test("a turn that reached a physical model is recorded (#62)", () => {
+	assert.equal(isPhysicalTurn({ provider: "lmstudio", model: "prism-ml/bonsai-27b" }), true);
+	assert.equal(isPhysicalTurn({ provider: "opencode-go", model: "deepseek-v4.1-flash" }), true);
 });

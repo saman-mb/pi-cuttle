@@ -22,6 +22,7 @@ import { applyPolicy, decideTier, detectPhase, splitRef, struggleSignals } from 
 import type { LocalGovernor } from "./governor.ts";
 import type { LocalHost } from "./host.ts";
 import type { ClassifierFailure, Reservation, RouterConfig, RouterFlavor, RouterState, Tier } from "./types.ts";
+import { VIRTUAL_PROVIDER } from "./types.ts";
 
 export interface RouterRuntime {
 	config: RouterConfig;
@@ -391,7 +392,7 @@ const FLAVORS: { id: RouterFlavor; name: string }[] = [
 export function registerVirtualModels(pi: ExtensionAPI, rt: RouterRuntime): void {
 	for (const flavor of FLAVORS) {
 		pi.registerVirtualModel<RouterState>({
-			provider: "cuttle",
+			provider: VIRTUAL_PROVIDER,
 			id: flavor.id,
 			name: flavor.name,
 			thinkingLevels: [...THINKING_LEVELS],

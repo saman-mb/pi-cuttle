@@ -20,9 +20,10 @@ import { isLocalProvider, splitRef } from "./classifier.ts";
 import { createHost } from "./host.ts";
 import { LocalGovernor } from "./governor.ts";
 import { registerCuttleCommand } from "./commands.ts";
-import { Telemetry } from "./telemetry.ts";
+import { Telemetry, isPhysicalTurn } from "./telemetry.ts";
 import { registerVirtualModels, type RouterRuntime } from "./virtual-models.ts";
 import type { Tier } from "./types.ts";
+import { VIRTUAL_PROVIDER } from "./types.ts";
 
 /** Session id for telemetry, tolerating a minimal context (tests, early teardown). */
 function safeSessionId(ctx: { sessionManager?: { getSessionId?: () => string } }): string | undefined {
@@ -100,8 +101,8 @@ export default function modelRouter(pi: ExtensionAPI): void {
 		log?.(`session_start autoSelect=${rt.config.autoSelect} explicit=${explicitModelRequested(process.argv)} current=${ctx.model?.provider}/${ctx.model?.id}`);
 		if (!rt.config.autoSelect) return;
 		if (explicitModelRequested(process.argv)) return;
-		if (ctx.model?.provider === "cuttle") return;
-		const model = ctx.modelRegistry.find("cuttle", "auto");
+		if (ctx.model?.provider === VIRTUAL_PROVIDER) return;
+		const model = ctx.modelRegistry.find(VIRTUAL_PROVIDER, "auto");
 		log?.(`session_start selecting cuttle/auto found=${!!model}`);
 		if (model) await pi.setModel(model);
 	});
@@ -120,6 +121,11 @@ export default function modelRouter(pi: ExtensionAPI): void {
 		};
 		if (message.role !== "assistant" || !message.model) return;
 		governor.releaseOne(message.model);
+		// #62: a message the provider layer attributes to the virtual provider means routing never
+		// resolved a physical model — nothing ran, nothing was spent. Recording it as a cloud turn
+		// (which is what the local/cloud fallback does with the id `auto`) quietly deflates both the
+		// local share and the savings figure /cuttle stats reports.
+		if (!isPhysicalTurn(message)) return;
 		telemetry.record({
 			ts: Date.now(),
 			...(safeSessionId(ctx) ? { sessionId: safeSessionId(ctx)! } : {}),

@@ -9,6 +9,15 @@ export type { HostCapabilities } from "./host.ts";
  * governor can run outside a pi process.
  */
 
+/**
+ * The provider id the `cuttle/*` virtual models are registered under.
+ *
+ * Shared rather than repeated as a literal: the auto-select path, the virtual-model
+ * registration, and the rule that a message attributed to this provider never reached a
+ * physical model (#62) all have to agree on it.
+ */
+export const VIRTUAL_PROVIDER = "cuttle";
+
 /** Which side of the local/cloud split a turn belongs on. */
 export type Tier = "local" | "cloud";
 

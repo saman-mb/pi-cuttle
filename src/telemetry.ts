@@ -13,6 +13,19 @@ import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import type { TelemetryConfig, Tier } from "./types.ts";
+import { VIRTUAL_PROVIDER } from "./types.ts";
+
+/**
+ * Whether a completed assistant message describes a turn that reached a physical model.
+ *
+ * pi reports the virtual provider on a message when routing never resolved a target — a
+ * mistyped `catalog.local`, an unreachable provider, no candidate at all (#62). Those turns
+ * ran nothing and spent nothing, and recording them would count a phantom turn as cloud
+ * spend: exactly the number this module exists to avoid overstating.
+ */
+export function isPhysicalTurn(message: { provider?: string; model?: string }): boolean {
+	return message.provider !== undefined && message.provider !== "" && message.provider !== VIRTUAL_PROVIDER;
+}
 
 export interface DecisionRecord {
 	ts: number;
