@@ -18,7 +18,7 @@
 import type { Message } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ModelRoute, ModelRouteRequest } from "@earendil-works/pi-coding-agent";
 
-import { applyPolicy, decideTier, splitRef } from "./classifier.ts";
+import { applyPolicy, decideTier, detectPhase, splitRef } from "./classifier.ts";
 import type { LocalGovernor } from "./governor.ts";
 import type { LocalHost } from "./host.ts";
 import type { RouterConfig, RouterFlavor, RouterState, Tier } from "./types.ts";
@@ -87,6 +87,28 @@ function resolveModel(
 	return { model, thinkingLevel, state };
 }
 
+/**
+ * Reserve a local slot for the turn, or return a reason to spill to cloud.
+ * Context guard (#15), then the loaded ceiling + cross-process slot (#13/#14/#16).
+ */
+async function ensureLocalSlot(
+	rt: RouterRuntime,
+	ctx: ExtensionContext,
+	flavor: RouterFlavor,
+	sessionId: string,
+): Promise<string | undefined> {
+	const modelKey = pickLocal(rt.config, flavor, rt.sizes);
+	if (!modelKey) return "no local model configured";
+	if (!fitsLocalWindow(rt, ctx, flavor)) return "context exceeds local window";
+	// Hosts report loaded state and assistant messages by bare model id, with no provider
+	// prefix. Key the slot by that same id so acquire/release and the ceiling all agree.
+	const bareKey = splitRef(modelKey)?.id ?? modelKey;
+	if (rt.config.local.maxLoadedModels > 0) await rt.governor.enforceLoadedCeiling(bareKey);
+	const reservation = await rt.governor.acquire(bareKey, { sessionId, flavor });
+	if (!reservation) return "local full, spilled to cloud";
+	return undefined;
+}
+
 /** Can the whole conversation fit the local model's window? (#15) */
 function fitsLocalWindow(rt: RouterRuntime, ctx: ExtensionContext, flavor: RouterFlavor): boolean {
 	const localRef = pickLocal(rt.config, flavor, rt.sizes);
@@ -110,7 +132,7 @@ export async function routeRequest(
 	const sessionId = ctx.sessionManager.getSessionId();
 	const state = request.state;
 	const thinking = request.thinkingLevel;
-	const phase = state?.phase ?? "planning";
+	const phase = state?.phase ?? detectPhase(request.messages) ?? "planning";
 
 	// Requests outside the agent loop (e.g. compaction summaries) use the deterministic tier.
 	if (request.reason === "direct") {
@@ -144,6 +166,34 @@ export async function routeRequest(
 	// Sticky within a session unless policy says re-classify every user turn (#12).
 	const reclassify = rt.config.policy.reclassify === "turn" && request.reason === "user";
 	if (state && !reclassify) {
+		// #36: planning ends at the first file-mutating tool call. Flip the phase and, under
+		// phase policy, let the tier follow it — the one place a sticky session changes tier
+		// without evidence of struggle.
+		if (state.phase === "planning") {
+			const detected = detectPhase(request.messages);
+			if (detected) {
+				const flipped = applyPolicy(
+					rt.config,
+					{ tier: state.tier, score: state.decision.score ?? 0, source: state.decision.source, reason: state.decision.reason },
+					detected,
+				);
+				let tier = flipped.tier;
+				const reason = `${flipped.reason}; phase -> ${detected}`;
+				if (tier === "local" && state.tier !== "local") {
+					const spill = await ensureLocalSlot(rt, ctx, flavor, sessionId);
+					if (spill) tier = "cloud";
+				}
+				const ref = tier === "local" ? pickLocal(rt.config, flavor, rt.sizes) : pickCloud(rt.config);
+				rt.log?.(`route phase-flip ${state.phase} -> ${detected} tier=${tier} ref=${ref}`);
+				const next: RouterState = {
+					tier,
+					modelId: ref ?? "",
+					phase: detected,
+					decision: { ...state.decision, reason },
+				};
+				return resolveModel(ctx, ref, thinking, next);
+			}
+		}
 		const ref = state.tier === "local" ? pickLocal(rt.config, flavor, rt.sizes) : pickCloud(rt.config);
 		return resolveModel(ctx, ref, thinking, state);
 	}
@@ -156,26 +206,12 @@ export async function routeRequest(
 	let tier: Tier = decision.tier;
 	const reasons: string[] = [decision.reason];
 
-	// Local side: context guard (#15), then reserve a slot or spill (#13/#16).
+	// Local side: reserve a slot or spill to cloud.
 	if (tier === "local") {
-		const modelKey = pickLocal(rt.config, flavor, rt.sizes);
-		if (!modelKey) {
+		const spill = await ensureLocalSlot(rt, ctx, flavor, sessionId);
+		if (spill) {
 			tier = "cloud";
-			reasons.push("no local model configured");
-		} else if (!fitsLocalWindow(rt, ctx, flavor)) {
-			tier = "cloud";
-			reasons.push("context exceeds local window");
-		} else {
-			// LM Studio reports loaded models and assistant messages by bare model id, with no
-			// provider prefix. Key the slot by that same id so acquire/release and the
-			// loaded-model ceiling all agree.
-			const bareKey = splitRef(modelKey)?.id ?? modelKey;
-			if (rt.config.local.maxLoadedModels > 0) await rt.governor.enforceLoadedCeiling(bareKey);
-			const reservation = await rt.governor.acquire(bareKey, { sessionId, flavor });
-			if (!reservation) {
-				tier = "cloud";
-				reasons.push("local full, spilled to cloud");
-			}
+			reasons.push(spill);
 		}
 	}
 

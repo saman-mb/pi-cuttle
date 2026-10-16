@@ -101,3 +101,51 @@ test("looksLikeLocalFailure flags local providers and overflow errors", () => {
 	assert.equal(looksLikeLocalFailure("opencode-go", "context_length_exceeded"), true);
 	assert.equal(looksLikeLocalFailure("opencode-go", "invalid api key"), false);
 });
+
+const EDIT_CALL = [
+	{ role: "user", content: [{ type: "text", text: "do it" }] },
+	{ role: "assistant", content: [{ type: "toolCall", id: "t1", name: "edit", arguments: {} }] },
+] as unknown as Message[];
+
+const READ_CALL = [
+	{ role: "user", content: [{ type: "text", text: "look around" }] },
+	{ role: "assistant", content: [{ type: "toolCall", id: "t1", name: "read", arguments: {} }] },
+] as unknown as Message[];
+
+test("detectPhase flips on edit/write and ignores read-only tools (#36)", async () => {
+	const { detectPhase } = await import("../src/classifier.ts");
+	assert.equal(detectPhase(EDIT_CALL), "implementation");
+	assert.equal(detectPhase(READ_CALL), undefined);
+});
+
+test("phase policy: the first edit flips the sticky session to the implement tier (#36)", async () => {
+	const cfg = config({
+		policy: { ...DEFAULTS.policy, mode: "phase", phase: { plan: "cloud", implement: "local" } },
+	});
+	const { rt } = runtime(cfg);
+	const state = { tier: "cloud" as const, modelId: "cloud/big", phase: "planning" as const, decision: { source: "heuristic" as const, reason: "prior" } };
+	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "continuation", state, messages: EDIT_CALL } as never, ctxWith());
+	assert.equal(route.state?.phase, "implementation");
+	assert.equal(route.state?.tier, "local");
+	assert.equal(route.model.provider, "lmstudio");
+	assert.match(route.state?.decision.reason ?? "", /phase -> implementation/);
+});
+
+test("phase flip spills back to cloud when the governor refuses (#36)", async () => {
+	const cfg = config({
+		policy: { ...DEFAULTS.policy, mode: "phase", phase: { plan: "cloud", implement: "local" } },
+	});
+	const { rt } = runtime(cfg, false);
+	const state = { tier: "cloud" as const, modelId: "cloud/big", phase: "planning" as const, decision: { source: "heuristic" as const, reason: "prior" } };
+	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "continuation", state, messages: EDIT_CALL } as never, ctxWith());
+	assert.equal(route.state?.phase, "implementation");
+	assert.equal(route.state?.tier, "cloud", "kept cloud when no local slot");
+});
+
+test("a read-only continuation does not flip the phase (#36)", async () => {
+	const cfg = config({ policy: { ...DEFAULTS.policy, mode: "phase", phase: { plan: "cloud", implement: "local" } } });
+	const { rt } = runtime(cfg);
+	const state = { tier: "cloud" as const, modelId: "cloud/big", phase: "planning" as const, decision: { source: "heuristic" as const, reason: "prior" } };
+	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "continuation", state, messages: READ_CALL } as never, ctxWith());
+	assert.equal(route.state, state, "state untouched");
+});

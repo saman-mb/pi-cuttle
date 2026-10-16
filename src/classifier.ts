@@ -11,6 +11,8 @@
  */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import type { Message } from "@earendil-works/pi-ai";
+
 import type { LocalHost } from "./host.ts";
 import type { Decision, RouterConfig, Tier } from "./types.ts";
 
@@ -34,6 +36,26 @@ function heuristicDecision(config: RouterConfig, prompt: string): Decision {
 	const { score, reason } = heuristicScore(prompt);
 	const tier: Tier = score >= config.policy.threshold ? "cloud" : "local";
 	return { tier, score, source: "heuristic", reason };
+}
+
+/** pi tools that mutate files: their first use flips the session into implementation (#36). */
+const MUTATING_TOOLS = new Set(["edit", "write"]);
+
+/**
+ * Detect the session phase from conversation evidence (#36).
+ *
+ * `phase` used to be a constant, which made `policy.mode: "phase"` silently route
+ * everything to the plan tier. The first file-mutating tool call is the signal that
+ * planning ended.
+ */
+export function detectPhase(messages: readonly Message[]): "implementation" | undefined {
+	for (const message of messages) {
+		if (message.role !== "assistant" || typeof message.content === "string") continue;
+		for (const block of message.content) {
+			if (block.type === "toolCall" && MUTATING_TOOLS.has(block.name)) return "implementation";
+		}
+	}
+	return undefined;
 }
 
 /** Providers whose models are served by the *local* host, so the classifier call is free. */
