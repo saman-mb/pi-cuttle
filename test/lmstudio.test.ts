@@ -59,3 +59,17 @@ test("physicalBatchSize is best-effort when the host is unreachable (#50)", asyn
 	const host = new LmStudioHost({ baseUrl: "http://127.0.0.1:1", timeoutMs: 50 });
 	assert.equal(await host.physicalBatchSize("anything"), undefined);
 });
+
+test("physicalBatchSize follows the real list() path, config included (#50)", async () => {
+	// Regression guard for a type boundary: the batch size arrives via list() -> loaded(), and
+	// nothing in the declared types forced `config` to survive that trip. If it were dropped,
+	// detection would silently stop working and the conservative default would take over.
+	const host = hostWith([
+		{
+			key: "vllm-d3-nano",
+			type: "decision",
+			loaded_instances: [{ id: "inst-1", config: { physical_batch_size: 768 } }],
+		},
+	]);
+	assert.equal(await host.physicalBatchSize("vllm-d3-nano"), 768);
+});

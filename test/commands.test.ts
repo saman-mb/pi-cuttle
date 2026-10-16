@@ -18,6 +18,8 @@ function rtWith(model: { key: string; type?: string } | undefined, batch?: numbe
 	return {
 		config: DEFAULTS,
 		host: {
+			capabilities: { canListLoaded: true, canLoadUnload: true, hasDecisionModels: true, hasModelSizes: true },
+			systemOne: async () => ({ answers: {} }),
 			list: async () => (model ? [model] : []),
 			...(batch === undefined ? {} : { physicalBatchSize: async () => batch }),
 		},
@@ -49,6 +51,8 @@ test("classifierCapacity reports the default when the host is unreachable (#50)"
 	const rt = {
 		config: DEFAULTS,
 		host: {
+			capabilities: { canListLoaded: true, canLoadUnload: true, hasDecisionModels: true, hasModelSizes: true },
+			systemOne: async () => ({ answers: {} }),
 			list: async () => {
 				throw new Error("host down");
 			},
@@ -57,4 +61,19 @@ test("classifierCapacity reports the default when the host is unreachable (#50)"
 	const capacity = await classifierCapacity(rt, "m");
 	assert.equal(capacity.batch, undefined);
 	assert.equal(capacity.effective, DEFAULTS.classifier.stateChars, "an unknown model type is not trimmed");
+});
+
+test("classifierCapacity does not trim a decision type the host cannot serve (#50)", async () => {
+	// Guards the gate against drifting from decideTier, which requires hasDecisionModels and
+	// systemOne as well as the model type.
+	const rt = {
+		config: DEFAULTS,
+		host: {
+			capabilities: { canListLoaded: true, canLoadUnload: true, hasDecisionModels: false, hasModelSizes: true },
+			list: async () => [{ key: "m", type: "decision" }],
+		},
+	} as unknown as RouterRuntime;
+	const capacity = await classifierCapacity(rt, "m");
+	assert.equal(capacity.isDecision, false, "the host cannot serve decision models, so nothing is trimmed");
+	assert.equal(capacity.effective, DEFAULTS.classifier.stateChars);
 });

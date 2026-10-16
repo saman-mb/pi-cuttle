@@ -13,11 +13,10 @@
  *     loaded models must not make the governor believe it enforced a ceiling.
  *   - `chat()` is the floor: every host can answer a classifier prompt.
  */
-import type { LmStudioConfig } from "./types.ts";
+import type { HostKind, LoadedInstance, LmStudioConfig, RouterConfig } from "./types.ts";
 import { LmStudioHost } from "./lmstudio.ts";
 import { OllamaHost } from "./ollama.ts";
 import { OpenAiHost } from "./openai-host.ts";
-import type { HostKind, RouterConfig } from "./types.ts";
 
 /** What a host can actually do. Capability flags are read at routing time. */
 export interface HostCapabilities {
@@ -47,6 +46,12 @@ export interface HostModel {
 export interface HostInstance {
 	id: string;
 	remaining_ttl_seconds?: number;
+	/**
+	 * Per-instance runtime config, when the host reports one. LM Studio exposes the model's real
+	 * `physical_batch_size` here, which is what the decision-model trim reads (#50); hosts that
+	 * report nothing simply omit it.
+	 */
+	config?: NonNullable<LoadedInstance["config"]>;
 }
 
 export interface HostChatOptions {

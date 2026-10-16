@@ -158,8 +158,9 @@ export function isBatchLimitError(message: string | undefined): boolean {
 
 /**
  * Read the host's reported batch size, treating every kind of "no answer" alike (#50): an absent
- * method, a throw, a zero, or a non-finite value all mean "unknown", so the caller falls back to
- * the conservative default instead of failing the whole classification.
+ * method, a throw, or a falsy value (notably `0`) all mean "unknown". A non-finite value passes
+ * through here and is normalised to the conservative default by `decisionStateBudget`, which is
+ * the single place the budget is derived.
  */
 export async function detectPhysicalBatchSize(host: LocalHost, id: string): Promise<number | undefined> {
 	if (!host.physicalBatchSize) return undefined;
@@ -266,7 +267,6 @@ export async function decideTier(input: {
 		let answer: string | undefined;
 		if (LOCAL_PROVIDERS.has(parsed.provider)) {
 			// The provider names a local host, so the decision itself costs nothing.
-			const signal = AbortSignal.timeout(config.classifier.timeoutMs);
 			const type = (await host.modelType?.(parsed.id)) ?? undefined;
 			if (type === "decision" && host.capabilities.hasDecisionModels && host.systemOne) {
 				// A Jev-style decision model: one typed question over the System One API. The whole
@@ -288,7 +288,11 @@ export async function decideTier(input: {
 					return { tier, score: complex, source: "classifier", reason: `local system-one p(complex)=${complex.toFixed(2)}` };
 				}
 			} else {
-				answer = await host.chat(parsed.id, CLASSIFIER_PROMPT(clipped, config.policy.threshold), { signal });
+				// Only the chat path uses this signal: the decision path builds a fresh one per attempt
+				// inside `systemOneWithRetry`, so creating it here would just start a discarded timer.
+				answer = await host.chat(parsed.id, CLASSIFIER_PROMPT(clipped, config.policy.threshold), {
+					signal: AbortSignal.timeout(config.classifier.timeoutMs),
+				});
 			}
 		} else {
 			const model = ctx.modelRegistry.findOfType("classifier", parsed.provider, parsed.id);

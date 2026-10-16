@@ -192,7 +192,9 @@ export async function classifierCapacity(
 	} catch {
 		/* offline reads as unloaded; the conservative default still applies */
 	}
-	const isDecision = model?.type === "decision";
+	// Mirror decideTier's gate exactly, so the capacity we report cannot drift from what the
+	// classifier actually trims against: a decision type only counts when the host serves them.
+	const isDecision = model?.type === "decision" && rt.host.capabilities.hasDecisionModels && !!rt.host.systemOne;
 	// Only decision models have a single-pass batch limit to trim against.
 	const batch = isDecision ? await detectPhysicalBatchSize(rt.host, id) : undefined;
 	const budget = decisionStateBudget(batch);
