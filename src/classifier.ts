@@ -272,7 +272,10 @@ export async function decideTier(input: {
 				// A Jev-style decision model: one typed question over the System One API. The whole
 				// prompt is a single physical batch, so trim it to that budget and retry once smaller
 				// on overflow, rather than silently missing the batch limit (#50).
-				const systemOne = host.systemOne;
+				// #57: `LmStudioHost.systemOne` is a prototype method that calls `this.request`, so it
+				// must stay bound to its host. Extracting it as a bare function throws on the first
+				// call, and the graceful fallback then hides that as an ordinary heuristic decision.
+				const systemOne = host.systemOne.bind(host);
 				const detected = await detectPhysicalBatchSize(host, parsed.id);
 				const budget = decisionStateBudget(detected);
 				const cap = Math.min(config.classifier.stateChars, budget);

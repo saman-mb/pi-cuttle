@@ -97,6 +97,44 @@ test("decision model via System One: high complexity probability -> cloud", asyn
 	assert.equal(d.source, "classifier");
 });
 
+/**
+ * #57: the decision path must invoke `systemOne` on its host, not as a detached function.
+ *
+ * Every other fake in this file passes `systemOne` as an arrow function in an object literal.
+ * An arrow function never reads `this`, so those fakes cannot fail however the method is
+ * called — which is how a detached `host.systemOne` broke every decision-model turn on
+ * LM Studio while the suite stayed green. This fake is a class method that reads `this` on
+ * purpose, because that is what the real `LmStudioHost.systemOne` does.
+ */
+class ReceiverSensitiveHost {
+	readonly capabilities = { canListLoaded: true, canLoadUnload: true, hasDecisionModels: true, hasModelSizes: true };
+	readonly kind = "lmstudio" as const;
+	calls = 0;
+
+	async modelType(): Promise<string> {
+		return "decision";
+	}
+
+	async systemOne(): Promise<{ answers: Record<string, { type: string } & Record<string, unknown>> }> {
+		// Throws when the method is called without the host as its receiver.
+		this.calls++;
+		return { answers: { complexity: { type: "choice", choice: "complex", probabilities: { standard: 0.1, complex: 0.9 } } } };
+	}
+}
+
+test("decision model: systemOne is called with the host as its receiver (#57)", async () => {
+	const localHost = new ReceiverSensitiveHost();
+	const d = await decideTier({
+		config: { ...DEFAULTS, classifier: { ...DEFAULTS.classifier, model: "lmstudio/decision-2.0-kai-0.6b" } },
+		prompt: "rename a variable",
+		ctx,
+		host: localHost as unknown as LocalHost,
+	});
+	assert.equal(localHost.calls, 1, "systemOne must be invoked on the host instance");
+	assert.equal(d.source, "classifier", `the classifier must be reached, not the fallback: ${d.reason}`);
+	assert.equal(d.tier, "cloud");
+});
+
 test("decision model via System One: low complexity -> local", async () => {
 	const localHost = fakeHost({
 		modelType: async () => "decision",
