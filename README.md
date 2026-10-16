@@ -1,7 +1,7 @@
 # pi-cuttle
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/saman-mb/cuttle/main/docs/assets/logo.gif" width="140" alt="Cuttle — animated pixel-art cuttlefish with cycling chromatophore colours" />
+  <img src="docs/assets/logo.gif" width="140" alt="Cuttle — animated pixel-art cuttlefish with cycling chromatophore colours" />
 </p>
 
 [![tests](docs/badges/tests.svg)](https://github.com/saman-mb/pi-cuttle/actions) [![version](docs/badges/version.svg)](CHANGELOG.md) [![license](docs/badges/license.svg)](LICENSE)
