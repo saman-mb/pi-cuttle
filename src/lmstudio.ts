@@ -95,6 +95,12 @@ export class LmStudioHost implements LocalHost {
 	}
 
 	async load(modelKey: string, options: Record<string, unknown> = {}): Promise<void> {
+		// #64: LM Studio creates a NEW instance for every load call, even when the model is already
+		// resident, and nothing reclaims the extras. The session-start preload calls this once per
+		// session, so an unconditional load leaks an instance — and its VRAM — on every session,
+		// while `maxLoadedModels` cannot see it because the ceiling counts distinct keys, not
+		// instances. "Load" here means "ensure loaded", so a resident model is left alone.
+		if (await this.loadedInstance(modelKey)) return;
 		await this.request<unknown>("/api/v1/models/load", {
 			method: "POST",
 			body: JSON.stringify({ model: modelKey, ...options }),

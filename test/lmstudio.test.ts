@@ -73,3 +73,27 @@ test("physicalBatchSize follows the real list() path, config included (#50)", as
 	]);
 	assert.equal(await host.physicalBatchSize("vllm-d3-nano"), 768);
 });
+
+test("load leaves a resident model alone instead of creating another instance (#64)", async () => {
+	// LM Studio creates a new instance per load call even when the model is already loaded, so an
+	// unconditional preload leaks VRAM every session and the ceiling (which counts keys) misses it.
+	const host = hostWithLoaded([{ key: "vllm-d3-nano", instances: [{ id: "vllm-d3-nano" }] }]);
+	const calls: string[] = [];
+	(host as unknown as { request: (path: string) => Promise<unknown> }).request = async (path: string) => {
+		calls.push(path);
+		return {};
+	};
+	await host.load("vllm-d3-nano");
+	assert.deepEqual(calls, [], "no load request for a model that already has an instance");
+});
+
+test("load still loads a model that is not resident (#64)", async () => {
+	const host = hostWithLoaded([]);
+	const calls: string[] = [];
+	(host as unknown as { request: (path: string) => Promise<unknown> }).request = async (path: string) => {
+		calls.push(path);
+		return {};
+	};
+	await host.load("vllm-d3-nano");
+	assert.deepEqual(calls, ["/api/v1/models/load"], "the preload's whole purpose still works");
+});
