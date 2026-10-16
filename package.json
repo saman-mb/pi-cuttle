@@ -1,7 +1,7 @@
 {
   "name": "pi-cuttle",
   "version": "0.2.0",
-  "description": "Local-first model routing for pi — a local classifier picks the right model per turn, with a cross-process memory governor so subagent fanout cannot exhaust local VRAM. The pi extension for Cuttle.",
+  "description": "Local-first model routing for pi \u2014 a local classifier picks the right model per turn, with a cross-process memory governor so subagent fanout cannot exhaust local VRAM. The pi extension for Cuttle.",
   "type": "module",
   "license": "MIT",
   "author": "Saman Mathew Badakhshan",
@@ -58,6 +58,7 @@
     "test": "node --experimental-strip-types --test test/*.test.ts",
     "eval": "node --experimental-strip-types eval/run.ts",
     "typecheck": "tsc --noEmit",
+    "badges": "bash scripts/render-badges.sh",
     "lint": "tsc --noEmit",
     "prepublishOnly": "npm test && npm run typecheck"
   },

@@ -31,6 +31,10 @@ versions follow [SemVer](https://semver.org/).
   that an installed copy must be removed first, and no longer repeats pi's `pi -ne` hint for
   that conflict without noting that `-ne` removes local model providers (#60). It also states
   that `/cuttle` commands are terminal-UI only, and names the channels that work headless (#61).
+- The README badges are pinned by the suite (#55): `tests.svg` drops its count for "passing"
+  (a count went stale twice — 80 on a 109-test suite, 109 on 122), the version badge must match
+  `package.json`, and the license badge must match the packaged license. `npm run badges`
+  re-renders all three deterministically; `scripts/render-badges.sh` reads the version itself.
 
 ### Fixed
 
