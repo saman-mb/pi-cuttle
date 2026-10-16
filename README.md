@@ -114,8 +114,12 @@ Set `host` to `ollama` or `openai` and the matching section's `baseUrl` (default
 | `local.*` | The memory governor. See [docs/CONFIG.md](docs/CONFIG.md). |
 
 > Model ids must be exact `key`s from LM Studio's `GET /api/v1/models` catalog, not display
-> names. `/router doctor` verifies the decision model loads and answers, and reports the
-> prompt capacity it will trim to.
+> names. `/router doctor` verifies the decision model is in the catalog and answers a trivial
+> probe, and reports the prompt capacity it will trim to (decision models only).
+>
+> Set `PI_MODEL_ROUTER_DEBUG=<path>` to log every routing decision, plus any classifier trim or
+> failure, to that file. The router is otherwise silent, so that file and `/router doctor` are
+> the only places a classifier fallback becomes visible.
 
 Interactive editing (persists to the user config file):
 

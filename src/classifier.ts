@@ -143,7 +143,11 @@ export const MIN_DECISION_STATE_CHARS = 256;
  * wrapper overhead. Pure and exported so `/router doctor` can report it (#50).
  */
 export function decisionStateBudget(physicalBatchSize = DEFAULT_PHYSICAL_BATCH_TOKENS): number {
-	const tokens = Math.max(0, physicalBatchSize - DECISION_WRAPPER_TOKENS);
+	// A zero or non-finite batch means the host reported nothing usable, not that the model can
+	// take zero tokens; fall back to the conservative default rather than flooring to 256 chars.
+	const batch =
+		Number.isFinite(physicalBatchSize) && physicalBatchSize > 0 ? physicalBatchSize : DEFAULT_PHYSICAL_BATCH_TOKENS;
+	const tokens = Math.max(0, batch - DECISION_WRAPPER_TOKENS);
 	return Math.max(MIN_DECISION_STATE_CHARS, Math.floor(tokens * DECISION_CHARS_PER_TOKEN));
 }
 
@@ -153,11 +157,18 @@ export function isBatchLimitError(message: string | undefined): boolean {
 }
 
 /**
- * Decision-model state sizes that succeeded in this process, keyed by model id. Token-dense
- * content can overflow the physical batch at the conservative budget; once a smaller size is
- * known to work, later calls start there instead of failing again.
+ * Read the host's reported batch size, treating every kind of "no answer" alike (#50): an absent
+ * method, a throw, a zero, or a non-finite value all mean "unknown", so the caller falls back to
+ * the conservative default instead of failing the whole classification.
  */
-const decisionStateCache = new Map<string, number>();
+export async function detectPhysicalBatchSize(host: LocalHost, id: string): Promise<number | undefined> {
+	if (!host.physicalBatchSize) return undefined;
+	try {
+		return (await host.physicalBatchSize(id)) || undefined;
+	} catch {
+		return undefined;
+	}
+}
 
 type SystemOne = NonNullable<LocalHost["systemOne"]>;
 type SystemOneResult = Awaited<ReturnType<SystemOne>>;
@@ -175,7 +186,11 @@ const COMPLEXITY_QUESTIONS: Record<string, { type: string } & Record<string, unk
 
 /**
  * One System One complexity call. If the model rejects an over-long prompt as exceeding its
- * physical batch, retry exactly once at half the state and remember the size that fit (#50).
+ * physical batch, retry exactly once at half the state (#50).
+ *
+ * The retry deliberately keeps no memory of the smaller size. Remembering it would cap every
+ * later classification of that model at the reduced size, even for ordinary prose that fits the
+ * budget comfortably — a permanent loss of classifier signal to save one cheap failed request.
  *
  * Each attempt gets its own timeout: a shared `AbortSignal.timeout()` starts counting when it is
  * created, so a slow first attempt would otherwise leave the retry already aborted and therefore
@@ -198,7 +213,6 @@ async function systemOneWithRetry(
 		const result = await systemOne(id, { prompt: state.slice(0, shrunk) }, COMPLEXITY_QUESTIONS, {
 			signal: AbortSignal.timeout(timeoutMs),
 		});
-		decisionStateCache.set(id, shrunk);
 		return result;
 	}
 }
@@ -259,13 +273,12 @@ export async function decideTier(input: {
 				// prompt is a single physical batch, so trim it to that budget and retry once smaller
 				// on overflow, rather than silently missing the batch limit (#50).
 				const systemOne = host.systemOne;
-				const detected = await host.physicalBatchSize?.(parsed.id);
+				const detected = await detectPhysicalBatchSize(host, parsed.id);
 				const budget = decisionStateBudget(detected);
-				const cached = decisionStateCache.get(parsed.id);
-				const cap = Math.min(config.classifier.stateChars, budget, cached ?? Number.POSITIVE_INFINITY);
+				const cap = Math.min(config.classifier.stateChars, budget);
 				const state = prompt.slice(0, cap);
-				if (state.length < config.classifier.stateChars) {
-					log?.(`classifier: state trimmed ${config.classifier.stateChars} -> ${state.length} chars (physical_batch=${detected ?? DEFAULT_PHYSICAL_BATCH_TOKENS})`);
+				if (state.length < prompt.length) {
+					log?.(`classifier: state trimmed ${prompt.length} -> ${state.length} chars (physical_batch=${detected ?? DEFAULT_PHYSICAL_BATCH_TOKENS})`);
 				}
 				const result = await systemOneWithRetry(systemOne, parsed.id, state, config.classifier.timeoutMs, log);
 				const choice = result.answers.complexity;

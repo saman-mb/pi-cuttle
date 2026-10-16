@@ -9,7 +9,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { availableHosts, createHost } from "./host.ts";
 
 import { saveUserConfig, type LoadedConfig } from "./config.ts";
-import { DEFAULT_PHYSICAL_BATCH_TOKENS, decisionStateBudget, isLocalProvider, splitRef } from "./classifier.ts";
+import { DEFAULT_PHYSICAL_BATCH_TOKENS, decisionStateBudget, detectPhysicalBatchSize, isLocalProvider, splitRef } from "./classifier.ts";
 import type { HostModel } from "./host.ts";
 import { formatStats, type Telemetry } from "./telemetry.ts";
 import type { RouterRuntime } from "./virtual-models.ts";
@@ -182,7 +182,7 @@ async function init(rt: RouterRuntime, ctx: ExtensionCommandContext): Promise<vo
  * the host reports one (the model is loaded), else the conservative default. Used by
  * `/router doctor` and `/router` status to show the character budget a prompt is trimmed to.
  */
-async function classifierCapacity(
+export async function classifierCapacity(
 	rt: RouterRuntime,
 	id: string,
 ): Promise<{ loaded: boolean; batch?: number; budget: number; isDecision: boolean; effective: number }> {
@@ -194,7 +194,7 @@ async function classifierCapacity(
 	}
 	const isDecision = model?.type === "decision";
 	// Only decision models have a single-pass batch limit to trim against.
-	const batch = isDecision ? await rt.host.physicalBatchSize?.(id) : undefined;
+	const batch = isDecision ? await detectPhysicalBatchSize(rt.host, id) : undefined;
 	const budget = decisionStateBudget(batch);
 	const effective = isDecision ? Math.min(rt.config.classifier.stateChars, budget) : rt.config.classifier.stateChars;
 	return { loaded: (model?.loaded_instances ?? []).length > 0, batch, budget, isDecision, effective };
@@ -274,6 +274,7 @@ async function doctor(rt: RouterRuntime, ctx: ExtensionCommandContext): Promise<
 		`host: ${rt.config.host} (listLoaded=${gov.capabilities.canListLoaded} loadUnload=${gov.capabilities.canLoadUnload} decision=${gov.capabilities.hasDecisionModels} sizes=${gov.capabilities.hasModelSizes})`,
 	);
 	lines.push(`slotDir: ${rt.config.local.slotDir}`);
+	lines.push("turn-level classifier failures are logged to $PI_MODEL_ROUTER_DEBUG when set (see README)");
 	if (ref && isLocalProvider(splitRef(ref)?.provider ?? "") && rt.config.local.maxLoadedModels > 0 && rt.config.local.maxLoadedModels < 2) {
 		lines.push("warning: a local classifier plus maxLoadedModels < 2 can evict the target; set maxLoadedModels >= 2");
 	}

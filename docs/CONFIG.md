@@ -40,15 +40,20 @@ The decision model. May be local or cloud.
 | `model` | string | unset | `provider/model`. A ref whose provider is a local host (`lmstudio/…`, `ollama/…`, `openai/…`) is called over local HTTP for free; anything else is resolved as a pi classifier via `ctx.modelRegistry`. |
 | `fallback` | `"heuristic"` \| `"local"` \| `"cloud"` | `"heuristic"` | What to use when the classifier is unavailable or times out. |
 | `timeoutMs` | number | `4000` | Classifier timeout before falling back. |
-| `stateChars` | number | `16000` | Characters of the prompt handed to the classifier. |
+| `stateChars` | number | `16000` | Characters of the prompt handed to the classifier. A decision model trims this to its physical batch — see below. |
 
 Example: `{ "model": "lmstudio/vllm-d3-nano", "fallback": "heuristic" }`.
 
 The model part must be an exact `key` from LM Studio's `GET /api/v1/models` catalog (not a
-display name). `/router doctor` checks that it is in the catalog, loads and answers, and
-reports the character budget prompts are trimmed to. Decision models run the whole prompt as
-a single physical batch (default 512 tokens), so `stateChars` is capped to that batch at
-call time regardless of the configured value.
+display name). `/router doctor` checks that it is in the catalog, answers a trivial probe, and
+reports the character budget a decision model's prompt is trimmed to. Decision models run the
+whole prompt as a single physical batch (default 512 tokens), so for those the effective size
+is the *smaller* of `stateChars` and the batch budget; a prompt over the budget is retried once
+at half size before falling back.
+
+Set `PI_MODEL_ROUTER_DEBUG` to a file path to log each routing decision and any classifier
+trim or failure there. The router is otherwise silent, so this is the only turn-level record
+that the classifier fell back to the heuristic.
 
 ## `catalog`
 

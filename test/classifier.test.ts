@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { decideTier, applyPolicy, heuristicScore, splitRef, decisionStateBudget, isBatchLimitError } from "../src/classifier.ts";
+import { decideTier, applyPolicy, heuristicScore, splitRef, decisionStateBudget, detectPhysicalBatchSize, isBatchLimitError } from "../src/classifier.ts";
 import { DEFAULTS } from "../src/config.ts";
 import type { LocalHost } from "../src/host.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -187,10 +187,10 @@ test("a prompt above the decision model's physical batch is trimmed and still cl
 	assert.equal(d.tier, "cloud");
 	assert.equal(seen.length, 1);
 	assert.equal(seen[0]?.length, decisionStateBudget(512), "state is clipped to the batch budget");
-	assert.match(logs.join("\n"), /state trimmed 16000 -> 1920 chars \(physical_batch=512\)/);
+	assert.match(logs.join("\n"), /state trimmed 9000 -> 1920 chars \(physical_batch=512\)/);
 });
 
-test("a batch-limit rejection retries once at half size and is remembered for later calls (#50)", async () => {
+test("a batch-limit rejection retries once at half size, and the retry keeps no memory (#50)", async () => {
 	const seen: number[] = [];
 	const localHost = fakeHost({
 		modelType: async () => "decision",
@@ -212,11 +212,12 @@ test("a batch-limit rejection retries once at half size and is remembered for la
 	assert.deepEqual(seen, [1920, 960], "first attempt at the budget, then one retry at half");
 	assert.match(logs.join("\n"), /batch limit at 1920 chars/);
 
-	// A second call starts at the size that worked, with no further retry.
+	// No remembered shrink: a later call starts at the full budget again, so one dense prompt
+	// cannot permanently cap every later classification of this model at half size.
 	seen.length = 0;
 	const second = await decideTier({ config: cfg, prompt: "y".repeat(9000), ctx, host: localHost });
 	assert.equal(second.source, "classifier");
-	assert.deepEqual(seen, [960], "later calls reuse the remembered size");
+	assert.deepEqual(seen, [1920, 960], "the retry must not permanently halve the classifier's budget");
 });
 
 test("a decision-model failure is surfaced on the router log, not only in the reason (#50)", async () => {
@@ -263,9 +264,12 @@ test("a persistent batch-limit rejection retries once, then falls back with an e
 	assert.match(logs.join("\n"), /classifier: .*too large to process/);
 });
 
-test("each decision attempt gets its own timeout, so a slow first attempt cannot starve the retry (#50)", async () => {
-	// The old shared AbortSignal.timeout() started counting at creation: a first attempt that
-	// consumed the budget left the retry already aborted, making the retry pointless.
+test("each decision attempt gets its own abort signal, so a slow first attempt cannot starve the retry (#50)", async () => {
+	// A single shared AbortSignal.timeout() starts counting when it is created, so a first
+	// attempt that consumed the budget left the retry already aborted - and therefore
+	// pointless - exactly when it was needed. Asserting distinct, un-aborted signals tests that
+	// deterministically, with no timing dependency.
+	const signals: (AbortSignal | undefined)[] = [];
 	const seen: number[] = [];
 	const localHost = fakeHost({
 		modelType: async () => "decision",
@@ -273,21 +277,43 @@ test("each decision attempt gets its own timeout, so a slow first attempt cannot
 		systemOne: async (_id: string, state: Record<string, unknown>, _q: unknown, opts: { signal?: AbortSignal }) => {
 			const chars = String(state.prompt).length;
 			seen.push(chars);
+			signals.push(opts.signal);
 			if (chars > decisionStateBudget(512) / 2) {
-				// Burn most of the attempt's budget before reporting the overflow.
-				await new Promise((resolve) => setTimeout(resolve, 40));
 				throw new Error("input (9999 tokens) is too large to process. current batch size: 512");
 			}
-			assert.equal(opts.signal?.aborted, false, "the retry's signal must not already be aborted");
 			return { answers: { complexity: { type: "choice", probabilities: { standard: 0.9, complex: 0.1 } } } };
 		},
 	});
 	const d = await decideTier({
-		config: { ...DEFAULTS, classifier: { ...DEFAULTS.classifier, model: "lmstudio/cap-timeout", timeoutMs: 45 } },
+		config: { ...DEFAULTS, classifier: { ...DEFAULTS.classifier, model: "lmstudio/cap-timeout", timeoutMs: 5000 } },
 		prompt: "w".repeat(9000),
 		ctx,
 		host: localHost,
 	});
 	assert.deepEqual(seen, [1920, 960]);
+	assert.equal(signals.length, 2, "two attempts, each with its own signal");
+	assert.notEqual(signals[0], signals[1], "the retry must not reuse the first attempt's signal");
+	assert.equal(signals[1]?.aborted, false, "the retry's signal must not already be aborted");
 	assert.equal(d.source, "classifier", "a fresh per-attempt timeout lets the retry actually run");
+});
+
+test("detectPhysicalBatchSize treats absence, a throw and a zero alike as unknown (#50)", async () => {
+	assert.equal(await detectPhysicalBatchSize(fakeHost({}), "m"), undefined, "no method means unknown");
+
+	const throwing = fakeHost({
+		physicalBatchSize: async () => {
+			throw new Error("host exploded");
+		},
+	});
+	assert.equal(await detectPhysicalBatchSize(throwing, "m"), undefined, "a throwing host must not fail the call");
+
+	assert.equal(await detectPhysicalBatchSize(fakeHost({ physicalBatchSize: async () => 0 }), "m"), undefined, "zero is not a usable batch");
+	assert.equal(await detectPhysicalBatchSize(fakeHost({ physicalBatchSize: async () => 2048 }), "m"), 2048);
+});
+
+test("decisionStateBudget treats a zero or non-finite batch as unknown, not as a tiny limit (#50)", () => {
+	assert.equal(decisionStateBudget(0), decisionStateBudget(), "0 means unknown, not a zero-token limit");
+	assert.equal(decisionStateBudget(Number.NaN), decisionStateBudget());
+	assert.equal(decisionStateBudget(Number.POSITIVE_INFINITY), decisionStateBudget());
+	assert.equal(decisionStateBudget(100), 256, "a real but tiny batch still floors at the minimum");
 });
