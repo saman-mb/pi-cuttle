@@ -3,7 +3,7 @@
  *
  * Rather than guessing a child's role from its prompt, we register one virtual
  * model per policy and let pi's native per-role model config choose between them
- * (`subagents.agentOverrides.<role>.model`). `router/auto` is the global default.
+ * (`subagents.agentOverrides.<role>.model`). `cuttle/auto` is the global default.
  *
  * pi stores returned router state on the session branch, so it follows forks and
  * survives compaction.
@@ -27,15 +27,15 @@ export interface RouterRuntime {
 	config: RouterConfig;
 	host: LocalHost;
 	governor: LocalGovernor;
-	/** Session-scoped pins set by `/router local|cloud|auto`. */
+	/** Session-scoped pins set by `/cuttle local|cloud|auto`. */
 	pins: Map<string, Tier>;
-	/** Invocation-wide override from `--router-force`, read lazily (#26). */
+	/** Invocation-wide override from `--cuttle-force`, read lazily (#26). */
 	getForced?: () => Tier | undefined;
-	/** Local model key -> size in bytes, for `router/fast-local` ordering (#19). */
+	/** Local model key -> size in bytes, for `cuttle/fast-local` ordering (#19). */
 	sizes: Map<string, number>;
-	/** Optional debug logger (set from `PI_MODEL_ROUTER_DEBUG`). */
+	/** Optional debug logger (set from `PI_CUTTLE_DEBUG`). */
 	log?: (message: string) => void;
-	/** Most recent classifier failure, for `/router status` (#53). */
+	/** Most recent classifier failure, for `/cuttle status` (#53). */
 	lastClassifierError?: ClassifierFailure;
 	/** Refresh `sizes` from the local host; best-effort. */
 	refreshSizes?: () => Promise<void>;
@@ -109,11 +109,11 @@ function resolveModel(
 	thinkingLevel: RouterRequest["thinkingLevel"],
 	state: RouterState,
 ): ModelRoute<RouterState> {
-	if (!ref) throw new Error("pi-model-router: no model configured for the chosen tier (set catalog.local/cloud)");
+	if (!ref) throw new Error("pi-cuttle: no model configured for the chosen tier (set catalog.local/cloud)");
 	const parsed = splitRef(ref);
-	if (!parsed) throw new Error(`pi-model-router: invalid model ref '${ref}'`);
+	if (!parsed) throw new Error(`pi-cuttle: invalid model ref '${ref}'`);
 	const model = ctx.modelRegistry.find(parsed.provider, parsed.id);
-	if (!model) throw new Error(`pi-model-router: model '${ref}' is not in the catalog`);
+	if (!model) throw new Error(`pi-cuttle: model '${ref}' is not in the catalog`);
 	return { model, thinkingLevel, state };
 }
 
@@ -299,7 +299,7 @@ export async function routeRequest(
 	const prompt = lastUserText(request.messages);
 	const forced = rt.getForced?.() ?? rt.pins.get(sessionId) ?? flavorBias(flavor);
 	const decided = await decideTier({ config: rt.config, prompt, ctx, host: rt.host, log: rt.log, ...(forced ? { forced } : {}) });
-	// #53: keep the last classifier failure on the runtime so `/router status` can show
+	// #53: keep the last classifier failure on the runtime so `/cuttle status` can show
 	// it without an env var or a diagnostic probe. A successful classification clears it.
 	if (decided.classifierFailure) {
 		rt.lastClassifierError = { ...decided.classifierFailure, turn: userTurn(request.messages), at: Date.now() };
@@ -341,7 +341,7 @@ export async function routeRequest(
 			}
 		}
 	}
-	if (!ref) throw new Error("pi-model-router: no configured model resolves (check catalog.local/cloud)");
+	if (!ref) throw new Error("pi-cuttle: no configured model resolves (check catalog.local/cloud)");
 	rt.log?.(`route result tier=${tier} ref=${ref} reasons=${reasons.join("; ")}`);
 	const next: RouterState = {
 		tier,
@@ -371,7 +371,7 @@ const FLAVORS: { id: RouterFlavor; name: string }[] = [
 export function registerVirtualModels(pi: ExtensionAPI, rt: RouterRuntime): void {
 	for (const flavor of FLAVORS) {
 		pi.registerVirtualModel<RouterState>({
-			provider: "router",
+			provider: "cuttle",
 			id: flavor.id,
 			name: flavor.name,
 			thinkingLevels: [...THINKING_LEVELS],

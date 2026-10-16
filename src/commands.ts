@@ -1,5 +1,5 @@
 /**
- * `/router` — inspect and edit routing without hand-editing JSON.
+ * `/cuttle` — inspect and edit routing without hand-editing JSON.
  *
  * Edits are persisted to the user config file (#17) via `saveUserConfig`, which
  * preserves unknown keys.
@@ -57,25 +57,25 @@ async function editModels(rt: RouterRuntime, ctx: ExtensionCommandContext): Prom
 				? { catalog: { cloud: [ref] } }
 				: { classifier: { model: ref } };
 	const path = refresh(rt, patch);
-	ctx.ui.notify(`router: ${slot} -> ${ref}\nwritten to ${path}`, "info");
+	ctx.ui.notify(`cuttle: ${slot} -> ${ref}\nwritten to ${path}`, "info");
 }
 
 async function editPolicy(rt: RouterRuntime, ctx: ExtensionCommandContext): Promise<void> {
 	const mode = await ctx.ui.select("Routing policy", ["complexity", "cost", "phase"]);
 	if (!mode) return;
 	const path = refresh(rt, { policy: { mode: mode as PolicyMode } });
-	ctx.ui.notify(`router: policy -> ${mode}\nwritten to ${path}`, "info");
+	ctx.ui.notify(`cuttle: policy -> ${mode}\nwritten to ${path}`, "info");
 }
 
 async function editLocalLimit(rt: RouterRuntime, ctx: ExtensionCommandContext): Promise<void> {
 	const raw = await ctx.ui.input("Max concurrent local requests", String(rt.config.local.maxConcurrent));
 	const value = Number(raw);
 	if (!Number.isFinite(value) || value < 0) {
-		ctx.ui.notify("router: not a number, unchanged", "warning");
+		ctx.ui.notify("cuttle: not a number, unchanged", "warning");
 		return;
 	}
 	const path = refresh(rt, { local: { maxConcurrent: Math.floor(value) } });
-	ctx.ui.notify(`router: maxConcurrent -> ${Math.floor(value)}\nwritten to ${path}`, "info");
+	ctx.ui.notify(`cuttle: maxConcurrent -> ${Math.floor(value)}\nwritten to ${path}`, "info");
 }
 
 /** Probe the configured host by hitting its inventory endpoint. */
@@ -96,16 +96,16 @@ function baseUrlOf(config: RouterConfig): string {
 }
 
 /**
- * `/router init` — first-run wizard (#46). Detect reachable hosts, list their models,
+ * `/cuttle init` — first-run wizard (#46). Detect reachable hosts, list their models,
  * pick local/decision/cloud, and write a working config in one pass.
  */
 async function init(rt: RouterRuntime, ctx: ExtensionCommandContext): Promise<void> {
 	const reachable = await availableHosts(rt.config);
 	if (reachable.length === 0) {
 		ctx.ui.notify(
-			"router: no local host reachable.\n" +
+			"cuttle: no local host reachable.\n" +
 				`tried: LM Studio ${rt.config.lmstudio.baseUrl}, ollama ${rt.config.ollama.baseUrl}, OpenAI-compatible ${rt.config.openai.baseUrl}\n` +
-				"start one and rerun /router init",
+				"start one and rerun /cuttle init",
 			"warning",
 		);
 		return;
@@ -121,11 +121,11 @@ async function init(rt: RouterRuntime, ctx: ExtensionCommandContext): Promise<vo
 	try {
 		models = (await host.list()).filter((m) => m.key && m.type !== "embeddings");
 	} catch (error) {
-		ctx.ui.notify(`router: could not list models from ${kind}: ${error instanceof Error ? error.message : String(error)}`, "warning");
+		ctx.ui.notify(`cuttle: could not list models from ${kind}: ${error instanceof Error ? error.message : String(error)}`, "warning");
 		return;
 	}
 	if (models.length === 0) {
-		ctx.ui.notify(`router: ${kind} is reachable but has no downloaded models`, "warning");
+		ctx.ui.notify(`cuttle: ${kind} is reachable but has no downloaded models`, "warning");
 		return;
 	}
 
@@ -164,7 +164,7 @@ async function init(rt: RouterRuntime, ctx: ExtensionCommandContext): Promise<vo
 	rt.config.host = kind;
 	ctx.ui.notify(
 		[
-			`router: configured ${kind}`,
+			`cuttle: configured ${kind}`,
 			`  local:    ${localPick}`,
 			`  decision: ${decisionRef ?? "heuristic"}`,
 			`  cloud:    ${cloudRef ?? "(none)"}`,
@@ -180,7 +180,7 @@ async function init(rt: RouterRuntime, ctx: ExtensionCommandContext): Promise<vo
 /**
  * A decision model's effective prompt capacity (#50): the detected `physical_batch_size` when
  * the host reports one (the model is loaded), else the conservative default. Used by
- * `/router doctor` and `/router` status to show the character budget a prompt is trimmed to.
+ * `/cuttle doctor` and `/cuttle` status to show the character budget a prompt is trimmed to.
  */
 export async function classifierCapacity(
 	rt: RouterRuntime,
@@ -276,7 +276,7 @@ async function doctor(rt: RouterRuntime, ctx: ExtensionCommandContext): Promise<
 		`host: ${rt.config.host} (listLoaded=${gov.capabilities.canListLoaded} loadUnload=${gov.capabilities.canLoadUnload} decision=${gov.capabilities.hasDecisionModels} sizes=${gov.capabilities.hasModelSizes})`,
 	);
 	lines.push(`slotDir: ${rt.config.local.slotDir}`);
-	lines.push("turn-level classifier failures are logged to $PI_MODEL_ROUTER_DEBUG when set (see README)");
+	lines.push("turn-level classifier failures are logged to $PI_CUTTLE_DEBUG when set (see README)");
 	if (ref && isLocalProvider(splitRef(ref)?.provider ?? "") && rt.config.local.maxLoadedModels > 0 && rt.config.local.maxLoadedModels < 2) {
 		lines.push("warning: a local classifier plus maxLoadedModels < 2 can evict the target; set maxLoadedModels >= 2");
 	}
@@ -328,8 +328,8 @@ async function status(rt: RouterRuntime, loaded: LoadedConfig, ctx: ExtensionCom
 	ctx.ui.notify(lines.join("\n"), "info");
 }
 
-export function registerRouterCommand(pi: ExtensionAPI, rt: RouterRuntime, loaded: LoadedConfig, telemetry: Telemetry): void {
-	pi.registerCommand("router", {
+export function registerCuttleCommand(pi: ExtensionAPI, rt: RouterRuntime, loaded: LoadedConfig, telemetry: Telemetry): void {
+	pi.registerCommand("cuttle", {
 		description: "Inspect and edit local/cloud model routing",
 		handler: async (args, ctx) => {
 			const [sub = "status", extra] = args.trim().split(/\s+/);
@@ -344,7 +344,7 @@ export function registerRouterCommand(pi: ExtensionAPI, rt: RouterRuntime, loade
 			if (sub === "auto" || sub === "local" || sub === "cloud") {
 				if (sub === "auto") rt.pins.delete(sessionId);
 				else rt.pins.set(sessionId, sub as Tier);
-				ctx.ui.notify(`router: this session pinned to ${sub === "auto" ? "classifier choice" : sub}`, "info");
+				ctx.ui.notify(`cuttle: this session pinned to ${sub === "auto" ? "classifier choice" : sub}`, "info");
 				return;
 			}
 			if (sub === "init") return init(rt, ctx);

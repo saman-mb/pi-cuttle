@@ -3,7 +3,7 @@ import type { HostCapabilities } from "./host.ts";
 export type { HostCapabilities } from "./host.ts";
 
 /**
- * Shared types for pi-model-router.
+ * Shared types for pi-cuttle.
  *
  * Nothing here imports pi at runtime; these are plain data shapes so tests and the
  * governor can run outside a pi process.
@@ -87,7 +87,7 @@ export interface LocalConfig {
 }
 
 export interface TelemetryConfig {
-	/** Append one JSONL line per assistant turn and expose `/router stats`. */
+	/** Append one JSONL line per assistant turn and expose `/cuttle stats`. */
 	enabled: boolean;
 	/** Ledger file. `~` is expanded. Metadata only, never prompt content. */
 	path: string;
@@ -157,7 +157,7 @@ export interface Decision {
 	classifierFailure?: { ref: string; message: string };
 }
 
-/** Most recent classifier failure, surfaced by `/router status` (#53). */
+/** Most recent classifier failure, surfaced by `/cuttle status` (#53). */
 export interface ClassifierFailure {
 	/** The configured classifier ref that failed. */
 	ref: string;

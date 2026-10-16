@@ -1,6 +1,10 @@
-# pi-model-router
+# pi-cuttle
 
-[![tests](docs/badges/tests.svg)](https://github.com/saman-mb/pi-model-router/actions) [![version](docs/badges/version.svg)](CHANGELOG.md) [![license](docs/badges/license.svg)](LICENSE)
+<p align="center">
+  <img src="https://raw.githubusercontent.com/saman-mb/cuttle/main/docs/assets/logo.gif" width="140" alt="Cuttle — animated pixel-art cuttlefish with cycling chromatophore colours" />
+</p>
+
+[![tests](docs/badges/tests.svg)](https://github.com/saman-mb/pi-cuttle/actions) [![version](docs/badges/version.svg)](CHANGELOG.md) [![license](docs/badges/license.svg)](LICENSE)
 
 ![demo](docs/demo.gif)
 
@@ -14,7 +18,7 @@ cross-process memory governor stops subagent fanout from loading ten local model
 **Host-agnostic:** local models are served by whichever server you already run —
 LM Studio, ollama, or any OpenAI-compatible host (llama.cpp, vLLM, …).
 
-- **What changes** — You select one virtual model (`router/auto`); the router dispatches each
+- **What changes** — You select one virtual model (`cuttle/auto`); the router dispatches each
   turn to the right physical model. Local, cloud, or let the classifier decide.
 - **Why it matters** — Most coding turns are mechanical and do not justify frontier-model cost.
   The classifier runs locally, so the *decision* is free.
@@ -25,10 +29,23 @@ Status: **working core, live-verified.** See [Verification](#verification).
 
 ---
 
+## Part of Cuttle
+
+This is the pi extension for [**Cuttle**](https://github.com/saman-mb/cuttle) — the local-first
+agent that gives every piece of work to the cheapest model likely to get it right. It is where
+Cuttle's routing (`decide()`) was prototyped, and it is the supported way to run Cuttle-style
+routing inside pi.
+
+It is **standalone**. No Cuttle install, no Python, no engine process — everything it needs
+lives in this package and talks to your local model server directly over HTTP. If you have
+Cuttle checked out, `pi-cuttle` is a useful baseline for it rather than a component of it.
+
+---
+
 ## How it works
 
 ```
-you select:   router/auto                (one model in /model, --model, settings)
+you select:   cuttle/auto                (one model in /model, --model, settings)
                  │
                  ▼
         ┌──────────────────┐
@@ -52,7 +69,7 @@ lmstudio/… (free)        cloud/… (metered)
 ```
 
 1. **Virtual models** (`pi.registerVirtualModel`) select a physical model per request.
-2. **`session_start` selects `router/auto`** — this is how routing becomes the default,
+2. **`session_start` selects `cuttle/auto`** — this is how routing becomes the default,
    because `defaultModel` does not resolve an extension virtual model (see spike #24).
 3. **Router state** lives on the session branch and survives compaction and forks.
 4. **`route()` talks to LM Studio over plain HTTP**, never through another extension's
@@ -63,14 +80,16 @@ lmstudio/… (free)        cloud/… (metered)
 ## Install
 
 ```bash
-pi install git:github.com/saman-mb/pi-model-router
+pi install npm:pi-cuttle
+# or from git:
+pi install git:github.com/saman-mb/pi-cuttle
 # or try a checkout without installing:
-pi -e /path/to/pi-model-router
+pi -e /path/to/pi-cuttle
 ```
 
 ## Configuration
 
-A single file, `~/.pi/agent/model-router.json` (project `.pi/model-router.json` overrides):
+A single file, `~/.pi/agent/cuttle.json` (project `.pi/cuttle.json` overrides):
 
 ```json
 {
@@ -105,7 +124,7 @@ Set `host` to `ollama` or `openai` and the matching section's `baseUrl` (default
 | Field | Meaning |
 |---|---|
 | `host` | `lmstudio` \| `ollama` \| `openai` — which local server serves `catalog.local`. |
-| `autoSelect` | Select `router/auto` at session start (unless `--model` was passed). |
+| `autoSelect` | Select `cuttle/auto` at session start (unless `--model` was passed). |
 | `classifier.model` | `provider/model` of the decision model. `lmstudio/…` is called locally. The model part must be a `key` from LM Studio's `GET /api/v1/models`. |
 | `classifier.fallback` | `heuristic` \| `local` \| `cloud` when the classifier is unavailable. |
 | `catalog.local` / `catalog.cloud` | Ordered candidate models. First match wins. |
@@ -114,27 +133,27 @@ Set `host` to `ollama` or `openai` and the matching section's `baseUrl` (default
 | `local.*` | The memory governor. See [docs/CONFIG.md](docs/CONFIG.md). |
 
 > Model ids must be exact `key`s from LM Studio's `GET /api/v1/models` catalog, not display
-> names. `/router doctor` verifies the decision model is in the catalog and answers a trivial
+> names. `/cuttle doctor` verifies the decision model is in the catalog and answers a trivial
 > probe, and reports the prompt capacity it will trim to (decision models only).
 >
-> Set `PI_MODEL_ROUTER_DEBUG=<path>` to log every routing decision, plus any classifier trim or
-> failure, to that file. The router is otherwise silent, so that file and `/router doctor` are
+> Set `PI_CUTTLE_DEBUG=<path>` to log every routing decision, plus any classifier trim or
+> failure, to that file. The router is otherwise silent, so that file and `/cuttle doctor` are
 > the only places a classifier fallback becomes visible.
 
 Interactive editing (persists to the user config file):
 
 ```
-/router                 # status: slots, loaded models, sources, last classifier failure
-/router init            # first-run wizard: detect hosts, pick models, write config
-/router doctor          # probe LM Studio + the classifier end to end
-/router models          # pick the local, cloud, or decision model
-/router policy          # complexity | cost | phase
-/router limit           # max concurrent local requests
-/router stats [days]    # local share, tokens, estimated $ saved vs all-cloud
-/router local|cloud|auto  # pin this session
+/cuttle                 # status: slots, loaded models, sources, last classifier failure
+/cuttle init            # first-run wizard: detect hosts, pick models, write config
+/cuttle doctor          # probe LM Studio + the classifier end to end
+/cuttle models          # pick the local, cloud, or decision model
+/cuttle policy          # complexity | cost | phase
+/cuttle limit           # max concurrent local requests
+/cuttle stats [days]    # local share, tokens, estimated $ saved vs all-cloud
+/cuttle local|cloud|auto  # pin this session
 ```
 
-One-off override: `pi --router-force=cloud`.
+One-off override: `pi --cuttle-force=cloud`.
 
 ## Subagents
 
@@ -144,8 +163,8 @@ every child does:
 ```json
 {
   "subagents": {
-    "defaultModel": "router/auto",
-    "defaultSubagentOnlyExtensions": ["/absolute/path/to/pi-model-router/src/index.ts"]
+    "defaultModel": "cuttle/auto",
+    "defaultSubagentOnlyExtensions": ["/absolute/path/to/pi-cuttle/src/index.ts"]
   }
 }
 ```
@@ -156,15 +175,15 @@ Then choose a policy per role with pi's native mapping — no router code change
 {
   "subagents": {
     "agentOverrides": {
-      "scout":  { "model": "router/fast-local" },
-      "worker": { "model": "router/cloud" },
-      "oracle": { "model": "router/cloud" }
+      "scout":  { "model": "cuttle/fast-local" },
+      "worker": { "model": "cuttle/cloud" },
+      "oracle": { "model": "cuttle/cloud" }
     }
   }
 }
 ```
 
-`router/auto`, `router/local`, `router/cloud`, and `router/fast-local` are all selectable
+`cuttle/auto`, `cuttle/local`, `cuttle/cloud`, and `cuttle/fast-local` are all selectable
 models. See [docs/SUBAGENTS.md](docs/SUBAGENTS.md) for why `defaultModel` alone is not enough.
 
 ---
@@ -176,7 +195,7 @@ issues; the results that shape the design:
 
 | Finding | Result |
 |---|---|
-| `defaultModel: "router/auto"` resolves at startup? | **No.** Use `session_start` + `pi.setModel`. |
+| `defaultModel: "cuttle/auto"` resolves at startup? | **No.** Use `session_start` + `pi.setModel`. |
 | Does `message_end` fire once per request? | **Yes** — once per assistant message, even multi-block. |
 | Are extension CLI flags readable in the factory? | **No** — read lazily in handlers. |
 | Does LM Studio accept a load TTL? | **No** — unload by `instance_id`; TTL is server-side. |

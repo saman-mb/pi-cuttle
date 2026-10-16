@@ -1,13 +1,13 @@
 # Configuration
 
-`pi-model-router` reads `model-router.json` from:
+`pi-cuttle` reads `cuttle.json` from:
 
-1. `~/.pi/agent/model-router.json` (user)
-2. `<cwd>/.pi/model-router.json` (project, overrides user)
+1. `~/.pi/agent/cuttle.json` (user)
+2. `<cwd>/.pi/cuttle.json` (project, overrides user)
 
 Merge is per top-level section: a project file that sets only `local` leaves the
 user's `classifier`, `catalog`, and `policy` intact. Missing file means defaults.
-Worked example: [`examples/model-router.example.json`](../examples/model-router.example.json).
+Worked example: [`examples/cuttle.example.json`](../examples/cuttle.example.json).
 
 ## `host`
 
@@ -27,7 +27,7 @@ router degrades explicitly per capability instead of assuming:
 On a host without loaded-model introspection the governor still caps concurrency
 cross-process via slot files (the invariant that matters); it simply cannot
 cooperate with the host's own memory policy. `maxLoadedModels` and
-`router/fast-local` size ordering apply only where the host supports them.
+`cuttle/fast-local` size ordering apply only where the host supports them.
 
 See the per-host sections below for URLs and tokens.
 
@@ -45,13 +45,13 @@ The decision model. May be local or cloud.
 Example: `{ "model": "lmstudio/vllm-d3-nano", "fallback": "heuristic" }`.
 
 The model part must be an exact `key` from LM Studio's `GET /api/v1/models` catalog (not a
-display name). `/router doctor` checks that it is in the catalog, answers a trivial probe, and
+display name). `/cuttle doctor` checks that it is in the catalog, answers a trivial probe, and
 reports the character budget a decision model's prompt is trimmed to. Decision models run the
 whole prompt as a single physical batch (default 512 tokens), so for those the effective size
 is the *smaller* of `stateChars` and the batch budget; a prompt over the budget is retried once
 at half size before falling back.
 
-Set `PI_MODEL_ROUTER_DEBUG` to a file path to log each routing decision and any classifier
+Set `PI_CUTTLE_DEBUG` to a file path to log each routing decision and any classifier
 trim or failure there. The router is otherwise silent, so this is the only turn-level record
 that the classifier fell back to the heuristic.
 
@@ -61,7 +61,7 @@ Ordered candidate lists, tried in order. The first entry is preferred; if it is
 missing from the model registry, over its context window, or out of slots, the next
 resolvable candidate is used before spilling to cloud (#45). When the cloud catalog
 resolves nothing, the turn falls back to a local candidate rather than failing; only
-when nothing at all resolves does routing raise a clear error. `router/fast-local`
+when nothing at all resolves does routing raise a clear error. `cuttle/fast-local`
 orders local candidates by on-disk size when the host reports it (LM Studio, ollama).
 
 | Field | Type | Default |
@@ -107,7 +107,7 @@ Memory governance. See [ARCHITECTURE.md](ARCHITECTURE.md) for why this is filesy
 | `idleUnloadMs` | number | `300000` | Reserved; LM Studio owns the TTL (see #27). |
 | `preload` | boolean | `true` | Warm the local model (and local classifier) at session start, fire-and-forget, so turn one is not a cold JIT load. |
 | `pinClassifier` | boolean | `true` | Protect the local classifier from `maxLoadedModels` eviction — evicting it just forces a reload next turn. |
-| `slotDir` | string | `~/.pi/agent/model-router/slots` | Where slot files live. `~` expands. |
+| `slotDir` | string | `~/.pi/agent/cuttle/slots` | Where slot files live. `~` expands. |
 | `staleSlotMs` | number | `300000` | A slot older than this is reaped. |
 
 **Local classifier:** if `classifier.model` is served by the local host, set
@@ -115,23 +115,23 @@ Memory governance. See [ARCHITECTURE.md](ARCHITECTURE.md) for why this is filesy
 evict each other every turn — the classifier is unloaded to make room for the
 target, then reloaded for the next decision. When the ceiling is reached and the
 target is not loaded, the governor unloads other models (all instances of them) to
-free a slot; `/router doctor` warns when this is misconfigured. This applies to
+free a slot; `/cuttle doctor` warns when this is misconfigured. This applies to
 hosts that report loaded state (LM Studio, ollama).
 
 ## `telemetry`
 
-The decision ledger behind `/router stats`. One JSONL line per assistant turn —
+The decision ledger behind `/cuttle stats`. One JSONL line per assistant turn —
 provider, model, tier, tokens. Metadata only; prompt and response content are never
 written.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `enabled` | boolean | `true` | Record decisions and enable `/router stats`. |
-| `path` | string | `~/.pi/agent/model-router/decisions.jsonl` | Ledger file. `~` expands. |
+| `enabled` | boolean | `true` | Record decisions and enable `/cuttle stats`. |
+| `path` | string | `~/.pi/agent/cuttle/decisions.jsonl` | Ledger file. `~` expands. |
 | `pricing` | object | `{}` | USD per million tokens, keyed by `provider/model`: `{ "input": 3, "output": 15 }`. |
 | `baseline` | string | unset | Model ref the all-cloud baseline is priced at; usually `catalog.cloud[0]`. |
 
-`/router stats [days]` (default 7) prints turns, the local share, token split, and —
+`/cuttle stats [days]` (default 7) prints turns, the local share, token split, and —
 when pricing is complete — spent vs the all-cloud baseline and the estimated saving.
 Missing prices degrade to counts rather than inventing numbers.
 
@@ -164,9 +164,9 @@ Every section also accepts `timeoutMs` (default `8000`).
 ## Precedence summary
 
 ```
-project .pi/model-router.json
-  > user ~/.pi/agent/model-router.json
+project .pi/cuttle.json
+  > user ~/.pi/agent/cuttle.json
     > built-in DEFAULTS
 ```
 
-`/router status` prints the contributing files and any warnings.
+`/cuttle status` prints the contributing files and any warnings.

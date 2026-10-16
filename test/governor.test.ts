@@ -25,7 +25,7 @@ let dir: string;
 let cfg: LocalConfig;
 
 beforeEach(() => {
-	dir = mkdtempSync(join(tmpdir(), "router-slots-"));
+	dir = mkdtempSync(join(tmpdir(), "cuttle-slots-"));
 	cfg = { ...DEFAULTS.local, slotDir: dir, staleSlotMs: 60_000, maxConcurrent: 1, maxConcurrentPerModel: 1 };
 });
 

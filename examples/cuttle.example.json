@@ -22,7 +22,7 @@
     "onFull": "spill",
     "waitMs": 20000,
     "idleUnloadMs": 300000,
-    "slotDir": "~/.pi/agent/model-router/slots",
+    "slotDir": "~/.pi/agent/cuttle/slots",
     "staleSlotMs": 300000
   },
   "lmstudio": {

@@ -45,7 +45,7 @@ test("an OpenAI-compatible host cannot enforce a loaded-model ceiling", async ()
 
 let dir: string;
 beforeEach(() => {
-	dir = mkdtempSync(join(tmpdir(), "router-host-"));
+	dir = mkdtempSync(join(tmpdir(), "cuttle-host-"));
 });
 afterEach(() => {
 	rmSync(dir, { recursive: true, force: true });

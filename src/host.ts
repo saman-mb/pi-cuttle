@@ -26,7 +26,7 @@ export interface HostCapabilities {
 	canLoadUnload: boolean;
 	/** Serves `decision`-type models through a typed decision API (System One). */
 	hasDecisionModels: boolean;
-	/** Reports on-disk model sizes (drives `router/fast-local` ordering). */
+	/** Reports on-disk model sizes (drives `cuttle/fast-local` ordering). */
 	hasModelSizes: boolean;
 }
 

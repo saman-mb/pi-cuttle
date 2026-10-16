@@ -2,7 +2,7 @@
 #
 # Fanout cap test (#13, #23).
 #
-# Launches N concurrent pi processes that all route through router/auto to the same
+# Launches N concurrent pi processes that all route through cuttle/auto to the same
 # local model, samples the filesystem slot directory while they run, and asserts the
 # peak number of concurrent local slots never exceeds local.maxConcurrent.
 #
@@ -38,7 +38,7 @@ DIR="$(mktemp -d "${TMPDIR:-/tmp}/pmr-fanout.XXXXXX")"
 mkdir -p "$DIR/.pi" "$DIR/slots"
 trap 'rm -rf "$DIR"' EXIT
 
-cat >"$DIR/.pi/model-router.json" <<EOF
+cat >"$DIR/.pi/cuttle.json" <<EOF
 {
   "autoSelect": true,
   "catalog": { "local": ["$LOCAL"], "cloud": ["$CLOUD"] },
@@ -66,7 +66,7 @@ sampler=$!
 
 pids=()
 for _ in $(seq 1 "$N"); do
-	(cd "$DIR" && pi -p "Reply with exactly: ok" --model router/auto -e "$EXT" --no-session >/dev/null 2>&1) &
+	(cd "$DIR" && pi -p "Reply with exactly: ok" --model cuttle/auto -e "$EXT" --no-session >/dev/null 2>&1) &
 	pids+=("$!")
 done
 
