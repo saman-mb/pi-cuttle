@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 
-import { createHost, type LocalHost } from "../src/host.ts";
+import { availableHosts, createHost, type LocalHost } from "../src/host.ts";
 import { OllamaHost } from "../src/ollama.ts";
 import { OpenAiHost } from "../src/openai-host.ts";
 import { DEFAULTS } from "../src/config.ts";
@@ -62,4 +62,29 @@ test("a host that cannot list loaded models still maps via slot accounting", asy
 
 	const status = await gov.status();
 	assert.equal(status.capabilities.canListLoaded, false);
+});
+
+test("availableHosts reports only reachable hosts, in preference order (#46)", async () => {
+	const impl = async (input: string | URL | Request): Promise<Response> => {
+		const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+		if (url.includes(":1235/api/v1/models")) return new Response(JSON.stringify({ models: [] }), { status: 200 });
+		return new Response("nope", { status: 500 });
+	};
+	globalThis.fetch = impl as typeof fetch;
+	try {
+		assert.deepEqual(await availableHosts(DEFAULTS, 200), ["lmstudio"]);
+	} finally {
+		globalThis.fetch = undefined as never;
+	}
+});
+
+test("availableHosts returns nothing when every host is down (#46)", async () => {
+	globalThis.fetch = (async () => {
+		throw new Error("ECONNREFUSED");
+	}) as typeof fetch;
+	try {
+		assert.deepEqual(await availableHosts(DEFAULTS, 200), []);
+	} finally {
+		globalThis.fetch = undefined as never;
+	}
 });

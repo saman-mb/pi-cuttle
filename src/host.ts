@@ -89,6 +89,25 @@ export interface SystemOneAnswer {
 	noul?: boolean | number;
 }
 
+/** Probe one host kind's inventory endpoint. Never throws; short timeout (#46). */
+export async function probeHostKind(kind: HostKind, config: RouterConfig, timeoutMs = 1500): Promise<boolean> {
+	const host = createHost({ ...config, host: kind });
+	try {
+		if (host.capabilities.canListLoaded) await host.loaded();
+		else await host.list();
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/** Which local hosts are reachable right now, in preference order (#46). */
+export async function availableHosts(config: RouterConfig, timeoutMs?: number): Promise<HostKind[]> {
+	const kinds: HostKind[] = ["lmstudio", "ollama", "openai"];
+	const results = await Promise.all(kinds.map((kind) => probeHostKind(kind, config, timeoutMs)));
+	return kinds.filter((_, index) => results[index]);
+}
+
 /** Build the host named by `config.host`. Deterministic; never throws. */
 export function createHost(config: RouterConfig): LocalHost {
 	switch (config.host) {

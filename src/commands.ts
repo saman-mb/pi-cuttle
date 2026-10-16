@@ -6,6 +6,8 @@
  */
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
+import { availableHosts, createHost } from "./host.ts";
+
 import { saveUserConfig, type LoadedConfig } from "./config.ts";
 import { isLocalProvider, splitRef } from "./classifier.ts";
 import { formatStats, type Telemetry } from "./telemetry.ts";
@@ -16,6 +18,7 @@ function refresh(rt: RouterRuntime, patch: Record<string, unknown>): string {
 	const path = saveUserConfig(patch);
 	// Apply in-memory so the change takes effect without a restart.
 	const next = patch as Record<string, Record<string, unknown>>;
+	if (typeof patch.host === "string") rt.config.host = patch.host as RouterRuntime["config"]["host"];
 	if (next.classifier) Object.assign(rt.config.classifier, next.classifier);
 	if (next.catalog) Object.assign(rt.config.catalog, next.catalog);
 	if (next.policy) Object.assign(rt.config.policy, next.policy);
@@ -89,6 +92,88 @@ function baseUrlOf(config: RouterConfig): string {
 	if (config.host === "ollama") return config.ollama.baseUrl;
 	if (config.host === "openai") return config.openai.baseUrl;
 	return config.lmstudio.baseUrl;
+}
+
+/**
+ * `/router init` — first-run wizard (#46). Detect reachable hosts, list their models,
+ * pick local/decision/cloud, and write a working config in one pass.
+ */
+async function init(rt: RouterRuntime, ctx: ExtensionCommandContext): Promise<void> {
+	const reachable = await availableHosts(rt.config);
+	if (reachable.length === 0) {
+		ctx.ui.notify(
+			"router: no local host reachable.\n" +
+				`tried: LM Studio ${rt.config.lmstudio.baseUrl}, ollama ${rt.config.ollama.baseUrl}, OpenAI-compatible ${rt.config.openai.baseUrl}\n` +
+				"start one and rerun /router init",
+			"warning",
+		);
+		return;
+	}
+	const kind =
+		reachable.length === 1
+			? reachable[0]!
+			: ((await ctx.ui.select("Which local host?", reachable)) as (typeof reachable)[number] | undefined);
+	if (!kind) return;
+
+	const host = createHost({ ...rt.config, host: kind });
+	let models: { key: string; type?: string }[] = [];
+	try {
+		models = (await host.list()).filter((m) => m.key && m.type !== "embeddings");
+	} catch (error) {
+		ctx.ui.notify(`router: could not list models from ${kind}: ${error instanceof Error ? error.message : String(error)}`, "warning");
+		return;
+	}
+	if (models.length === 0) {
+		ctx.ui.notify(`router: ${kind} is reachable but has no downloaded models`, "warning");
+		return;
+	}
+
+	const refs = models.map((m) => `${kind}/${m.key}`);
+	const localPick = await ctx.ui.select("Local model (runs free)", refs);
+	if (!localPick) return;
+
+	const decisionChoices = [
+		"heuristic (no model call)",
+		...models.filter((m) => m.type === "decision").map((m) => `${kind}/${m.key} (decision model)`),
+		...models.filter((m) => m.type !== "decision").map((m) => `${kind}/${m.key} (chat prompt)`),
+	];
+	const decisionPick = await ctx.ui.select("How should the router classify each session?", decisionChoices);
+	if (!decisionPick) return;
+	const decisionRef = decisionPick === "heuristic (no model call)" ? undefined : decisionPick.replace(/ \((decision model|chat prompt)\)$/, "");
+
+	const cloudChoices = [
+		"<none for now>",
+		...[...new Set(ctx.modelRegistry.getAvailable().map((m) => `${m.provider}/${m.id}`))]
+			.filter((ref) => !isLocalProvider(ref.slice(0, ref.indexOf("/"))))
+			.slice(0, 40),
+		"<type a model id>",
+	];
+	const cloudPick = await ctx.ui.select("Cloud model (used when the work needs judgement)", cloudChoices);
+	if (!cloudPick) return;
+	let cloudRef: string | undefined;
+	if (cloudPick === "<type a model id>") cloudRef = (await ctx.ui.input("Cloud model id (provider/model)"))?.trim() || undefined;
+	else if (cloudPick !== "<none for now>") cloudRef = cloudPick;
+
+	const patch: Record<string, unknown> = {
+		host: kind,
+		catalog: { local: [localPick], ...(cloudRef ? { cloud: [cloudRef] } : {}) },
+		...(decisionRef ? { classifier: { model: decisionRef } } : {}),
+	};
+	const path = refresh(rt, patch);
+	rt.config.host = kind;
+	ctx.ui.notify(
+		[
+			`router: configured ${kind}`,
+			`  local:    ${localPick}`,
+			`  decision: ${decisionRef ?? "heuristic"}`,
+			`  cloud:    ${cloudRef ?? "(none)"}`,
+			`written to ${path}`,
+			rt.config.local.maxLoadedModels < 2 && decisionRef ? "tip: set local.maxLoadedModels >= 2 so the classifier is not evicted" : "",
+		]
+			.filter(Boolean)
+			.join("\n"),
+		"info",
+	);
 }
 
 async function doctor(rt: RouterRuntime, ctx: ExtensionCommandContext): Promise<void> {
@@ -182,6 +267,7 @@ export function registerRouterCommand(pi: ExtensionAPI, rt: RouterRuntime, loade
 				ctx.ui.notify(`router: this session pinned to ${sub === "auto" ? "classifier choice" : sub}`, "info");
 				return;
 			}
+			if (sub === "init") return init(rt, ctx);
 			if (sub === "models") return editModels(rt, ctx);
 			if (sub === "policy") return editPolicy(rt, ctx);
 			if (sub === "limit") return editLocalLimit(rt, ctx);
