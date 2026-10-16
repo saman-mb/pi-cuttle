@@ -1,5 +1,9 @@
 # pi-model-router
 
+[![tests](docs/badges/tests.svg)](https://github.com/saman-mb/pi-model-router/actions) [![version](docs/badges/version.svg)](CHANGELOG.md) [![license](docs/badges/license.svg)](LICENSE)
+
+![demo](docs/demo.gif)
+
 **Hybrid local/cloud model routing for [pi](https://github.com/earendil-works/pi-coding-agent).**
 
 Type one prompt. A local classifier decides whether the work belongs on a local model
@@ -113,6 +117,7 @@ Interactive editing (persists to the user config file):
 
 ```
 /router                 # status: slots, loaded models, config sources
+/router init            # first-run wizard: detect hosts, pick models, write config
 /router doctor          # probe LM Studio + the classifier end to end
 /router models          # pick the local, cloud, or decision model
 /router policy          # complexity | cost | phase

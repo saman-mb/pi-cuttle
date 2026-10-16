@@ -1,6 +1,6 @@
 {
   "name": "pi-model-router",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Hybrid local/cloud model routing for pi — a local classifier picks the right model per turn, with a cross-process memory governor so subagent fanout cannot exhaust local VRAM.",
   "type": "module",
   "license": "MIT",
@@ -30,8 +30,10 @@
   "files": [
     "src",
     "docs",
+    "eval",
     "examples",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {

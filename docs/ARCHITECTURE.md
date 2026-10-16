@@ -69,8 +69,16 @@ or the `pi-subagents` package.
 | `src/governor.ts` | Cross-process slot broker + loaded-model cooperation (capability-gated). |
 | `src/classifier.ts` | `decideTier`: classifier call via the local host or pi, with heuristic fallback. |
 | `src/virtual-models.ts` | Register `router/auto`, `router/local`, `router/cloud`, `router/fast-local`; `route()` policy + spill. |
-| `src/commands.ts` | `/router` command. |
+| `src/telemetry.ts` | Decision ledger + `/router stats` aggregation (metadata only). |
+| `src/commands.ts` | `/router` command family (status, init, models, policy, limit, doctor, stats). |
 | `src/index.ts` | Extension factory; wires the above; `message_end` release hook. |
+
+## Evaluation
+
+`eval/corpus.jsonl` is ground truth for "which tier should serve this work" — 112
+labeled prompts scored by `npm run eval` with a recorded baseline in
+[eval/BASELINE.md](../eval/BASELINE.md). CI fails when heuristic accuracy drops below
+the floor. Add a prompt that exposed a real misroute before changing heuristics.
 
 ## Verification results
 
