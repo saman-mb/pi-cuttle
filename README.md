@@ -76,7 +76,7 @@ A single file, `~/.pi/agent/model-router.json` (project `.pi/model-router.json` 
 {
   "host": "lmstudio",
   "autoSelect": true,
-  "classifier": { "model": "lmstudio/decision-2.0-kai-0.6b", "fallback": "heuristic" },
+  "classifier": { "model": "lmstudio/vllm-d3-nano", "fallback": "heuristic" },
   "catalog": {
     "local": ["lmstudio/prism-ml/bonsai-27b"],
     "cloud": ["opencode-go/deepseek-v4.1-flash"]
@@ -106,12 +106,16 @@ Set `host` to `ollama` or `openai` and the matching section's `baseUrl` (default
 |---|---|
 | `host` | `lmstudio` \| `ollama` \| `openai` — which local server serves `catalog.local`. |
 | `autoSelect` | Select `router/auto` at session start (unless `--model` was passed). |
-| `classifier.model` | `provider/model` of the decision model. `lmstudio/…` is called locally. |
+| `classifier.model` | `provider/model` of the decision model. `lmstudio/…` is called locally. The model part must be a `key` from LM Studio's `GET /api/v1/models`. |
 | `classifier.fallback` | `heuristic` \| `local` \| `cloud` when the classifier is unavailable. |
 | `catalog.local` / `catalog.cloud` | Ordered candidate models. First match wins. |
 | `policy.mode` | `complexity` \| `cost` (bias local) \| `phase` (plan vs implement). |
 | `policy.reclassify` | `session` (default) or `turn`. |
 | `local.*` | The memory governor. See [docs/CONFIG.md](docs/CONFIG.md). |
+
+> Model ids must be exact `key`s from LM Studio's `GET /api/v1/models` catalog, not display
+> names. `/router doctor` verifies the decision model loads and answers, and reports the
+> prompt capacity it will trim to.
 
 Interactive editing (persists to the user config file):
 

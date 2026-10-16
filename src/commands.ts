@@ -9,7 +9,8 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { availableHosts, createHost } from "./host.ts";
 
 import { saveUserConfig, type LoadedConfig } from "./config.ts";
-import { isLocalProvider, splitRef } from "./classifier.ts";
+import { DEFAULT_PHYSICAL_BATCH_TOKENS, decisionStateBudget, isLocalProvider, splitRef } from "./classifier.ts";
+import type { HostModel } from "./host.ts";
 import { formatStats, type Telemetry } from "./telemetry.ts";
 import type { RouterRuntime } from "./virtual-models.ts";
 import type { PolicyMode, RouterConfig, Tier } from "./types.ts";
@@ -176,6 +177,37 @@ async function init(rt: RouterRuntime, ctx: ExtensionCommandContext): Promise<vo
 	);
 }
 
+/**
+ * A decision model's effective prompt capacity (#50): the detected `physical_batch_size` when
+ * the host reports one (the model is loaded), else the conservative default. Used by
+ * `/router doctor` and `/router` status to show the character budget a prompt is trimmed to.
+ */
+async function classifierCapacity(
+	rt: RouterRuntime,
+	id: string,
+): Promise<{ loaded: boolean; batch?: number; budget: number; isDecision: boolean; effective: number }> {
+	let model: HostModel | undefined;
+	try {
+		model = (await rt.host.list()).find((m) => m.key === id);
+	} catch {
+		/* offline reads as unloaded; the conservative default still applies */
+	}
+	const isDecision = model?.type === "decision";
+	// Only decision models have a single-pass batch limit to trim against.
+	const batch = isDecision ? await rt.host.physicalBatchSize?.(id) : undefined;
+	const budget = decisionStateBudget(batch);
+	const effective = isDecision ? Math.min(rt.config.classifier.stateChars, budget) : rt.config.classifier.stateChars;
+	return { loaded: (model?.loaded_instances ?? []).length > 0, batch, budget, isDecision, effective };
+}
+
+/** The `stateChars` actually handed to the classifier, after the decision-model trim (#50). */
+async function effectiveStateChars(rt: RouterRuntime): Promise<number> {
+	const ref = rt.config.classifier.model;
+	const parsed = ref ? splitRef(ref) : undefined;
+	if (!parsed || !isLocalProvider(parsed.provider)) return rt.config.classifier.stateChars;
+	return (await classifierCapacity(rt, parsed.id)).effective;
+}
+
 async function doctor(rt: RouterRuntime, ctx: ExtensionCommandContext): Promise<void> {
 	const lines: string[] = [];
 	const up = await probeHost(rt);
@@ -217,6 +249,25 @@ async function doctor(rt: RouterRuntime, ctx: ExtensionCommandContext): Promise<
 		}
 	}
 
+	if (ref) {
+		const capacityRef = splitRef(ref);
+		if (capacityRef && isLocalProvider(capacityRef.provider)) {
+			const capacity = await classifierCapacity(rt, capacityRef.id);
+			if (capacity.isDecision) {
+				const source =
+					capacity.batch !== undefined
+						? `detected physical_batch=${capacity.batch}`
+						: `not loaded - conservative default ${DEFAULT_PHYSICAL_BATCH_TOKENS}`;
+				lines.push(`capacity: trims state to ${capacity.effective} chars (${source})`);
+				if (rt.config.classifier.stateChars > capacity.effective) {
+					lines.push(
+						`note: classifier.stateChars ${rt.config.classifier.stateChars} exceeds that capacity; the state is trimmed, not rejected`,
+					);
+				}
+			}
+		}
+	}
+
 	const gov = await rt.governor.status();
 	lines.push(`slots: ${gov.slots.length}/${gov.localMax} used; loaded: ${gov.loadedModels.map((m) => m.key).join(", ") || "(none)"}`);
 	lines.push(
@@ -236,6 +287,7 @@ async function status(rt: RouterRuntime, loaded: LoadedConfig, ctx: ExtensionCom
 		`models:   local=${rt.config.catalog.local.join(", ") || "(none)"}`,
 		`          cloud=${rt.config.catalog.cloud.join(", ") || "(none)"}`,
 		`decision: ${rt.config.classifier.model ?? "heuristic only"} (fallback ${rt.config.classifier.fallback})`,
+		`stateChars: ${await effectiveStateChars(rt)} (configured ${rt.config.classifier.stateChars})`,
 		`policy:   ${rt.config.policy.mode} (threshold ${rt.config.policy.threshold}, reclassify ${rt.config.policy.reclassify})`,
 		`autoselect: ${rt.config.autoSelect}`,
 		`pin:      ${pinned ?? "auto"}`,

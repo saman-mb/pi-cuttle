@@ -114,6 +114,95 @@ export function splitRef(ref: string): { provider: string; id: string } | undefi
 	return { provider: ref.slice(0, slash), id: ref.slice(slash + 1) };
 }
 
+/**
+ * Physical per-batch token limit for the decision models this project targets (#50).
+ *
+ * System One models answer in a single forward pass: the runtime evaluates the whole prompt in
+ * one physical batch, which LM Studio defaults to 512 tokens. A longer prompt is rejected
+ * ("input (N tokens) is too large to process"), and the classifier used to silently fall through
+ * to the heuristic. `physical_batch_size` is not settable over REST, and an *unloaded* catalog
+ * entry omits batch fields entirely, so 512 is the conservative default for the first
+ * classification; `LocalHost.physicalBatchSize` refines it once the model is loaded.
+ */
+export const DEFAULT_PHYSICAL_BATCH_TOKENS = 512;
+
+/** Tokens the System One wrapper (instructions, criteria, model name, answer keys) adds. */
+export const DECISION_WRAPPER_TOKENS = 128;
+
+/**
+ * Conservative chars-per-token for the wrapped decision payload. Realistic English measured
+ * 5.26-8.0 chars/token; 5.0 leaves headroom for token-dense content such as code or CJK.
+ */
+export const DECISION_CHARS_PER_TOKEN = 5;
+
+/** Smallest state we will send a decision model; below this a retry cannot help. */
+export const MIN_DECISION_STATE_CHARS = 256;
+
+/**
+ * Characters of user prompt a decision model can take in one physical batch, after the fixed
+ * wrapper overhead. Pure and exported so `/router doctor` can report it (#50).
+ */
+export function decisionStateBudget(physicalBatchSize = DEFAULT_PHYSICAL_BATCH_TOKENS): number {
+	const tokens = Math.max(0, physicalBatchSize - DECISION_WRAPPER_TOKENS);
+	return Math.max(MIN_DECISION_STATE_CHARS, Math.floor(tokens * DECISION_CHARS_PER_TOKEN));
+}
+
+/** True when an error is the decision model's single-batch limit rejecting the prompt (#50). */
+export function isBatchLimitError(message: string | undefined): boolean {
+	return /too large to process|batch size|physical_batch/i.test(message ?? "");
+}
+
+/**
+ * Decision-model state sizes that succeeded in this process, keyed by model id. Token-dense
+ * content can overflow the physical batch at the conservative budget; once a smaller size is
+ * known to work, later calls start there instead of failing again.
+ */
+const decisionStateCache = new Map<string, number>();
+
+type SystemOne = NonNullable<LocalHost["systemOne"]>;
+type SystemOneResult = Awaited<ReturnType<SystemOne>>;
+
+const COMPLEXITY_QUESTIONS: Record<string, { type: string } & Record<string, unknown>> = {
+	complexity: {
+		type: "choice",
+		instructions: "How demanding is the software engineering work requested in prompt?",
+		criteria: {
+			standard: "Mechanical, well-scoped, or informational",
+			complex: "Design judgement, cross-cutting change, or hard debugging",
+		},
+	},
+};
+
+/**
+ * One System One complexity call. If the model rejects an over-long prompt as exceeding its
+ * physical batch, retry exactly once at half the state and remember the size that fit (#50).
+ *
+ * Each attempt gets its own timeout: a shared `AbortSignal.timeout()` starts counting when it is
+ * created, so a slow first attempt would otherwise leave the retry already aborted and therefore
+ * pointless. The cost is a worst case of two timeouts on the (rare) overflow path.
+ */
+async function systemOneWithRetry(
+	systemOne: SystemOne,
+	id: string,
+	state: string,
+	timeoutMs: number,
+	log?: (message: string) => void,
+): Promise<SystemOneResult> {
+	try {
+		return await systemOne(id, { prompt: state }, COMPLEXITY_QUESTIONS, { signal: AbortSignal.timeout(timeoutMs) });
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		const shrunk = Math.floor(state.length / 2);
+		if (!isBatchLimitError(message) || shrunk < MIN_DECISION_STATE_CHARS) throw error;
+		log?.(`classifier: batch limit at ${state.length} chars (${message}); retrying with ${shrunk}`);
+		const result = await systemOne(id, { prompt: state.slice(0, shrunk) }, COMPLEXITY_QUESTIONS, {
+			signal: AbortSignal.timeout(timeoutMs),
+		});
+		decisionStateCache.set(id, shrunk);
+		return result;
+	}
+}
+
 const CLASSIFIER_PROMPT = (prompt: string, threshold: number): string =>
 	[
 		"You are a routing classifier. Decide whether the software-engineering request below",
@@ -145,8 +234,10 @@ export async function decideTier(input: {
 	ctx: ExtensionContext;
 	host: LocalHost;
 	forced?: Tier;
+	/** Optional router log sink; receives trim and failure lines (#50). */
+	log?: (message: string) => void;
 }): Promise<Decision> {
-	const { config, prompt, ctx, host, forced } = input;
+	const { config, prompt, ctx, host, forced, log } = input;
 	if (forced) return { tier: forced, score: 0, source: "pin", reason: `pinned ${forced}` };
 	if (config.classifier.fallback === "heuristic" && !config.classifier.model) return heuristicDecision(config, prompt);
 
@@ -164,22 +255,19 @@ export async function decideTier(input: {
 			const signal = AbortSignal.timeout(config.classifier.timeoutMs);
 			const type = (await host.modelType?.(parsed.id)) ?? undefined;
 			if (type === "decision" && host.capabilities.hasDecisionModels && host.systemOne) {
-				// A Jev-style decision model: ask it a typed question over the System One API.
-				const result = await host.systemOne(
-					parsed.id,
-					{ prompt: clipped },
-					{
-						complexity: {
-							type: "choice",
-							instructions: "How demanding is the software engineering work requested in prompt?",
-							criteria: {
-								standard: "Mechanical, well-scoped, or informational",
-								complex: "Design judgement, cross-cutting change, or hard debugging",
-							},
-						},
-					},
-					{ signal },
-				);
+				// A Jev-style decision model: one typed question over the System One API. The whole
+				// prompt is a single physical batch, so trim it to that budget and retry once smaller
+				// on overflow, rather than silently missing the batch limit (#50).
+				const systemOne = host.systemOne;
+				const detected = await host.physicalBatchSize?.(parsed.id);
+				const budget = decisionStateBudget(detected);
+				const cached = decisionStateCache.get(parsed.id);
+				const cap = Math.min(config.classifier.stateChars, budget, cached ?? Number.POSITIVE_INFINITY);
+				const state = prompt.slice(0, cap);
+				if (state.length < config.classifier.stateChars) {
+					log?.(`classifier: state trimmed ${config.classifier.stateChars} -> ${state.length} chars (physical_batch=${detected ?? DEFAULT_PHYSICAL_BATCH_TOKENS})`);
+				}
+				const result = await systemOneWithRetry(systemOne, parsed.id, state, config.classifier.timeoutMs, log);
 				const choice = result.answers.complexity;
 				if (choice?.type === "choice") {
 					const complex = choice.probabilities?.complex ?? (choice.choice === "complex" ? 1 : 0);
@@ -218,6 +306,7 @@ export async function decideTier(input: {
 		if (tier) return { tier, score: tier === "cloud" ? 1 : 0, source: "classifier", reason: `classifier said ${tier}` };
 	} catch (error) {
 		classifierError = error instanceof Error ? error.message : String(error);
+		log?.(`classifier: ${classifierError}`);
 	}
 
 	if (config.classifier.fallback === "heuristic") {

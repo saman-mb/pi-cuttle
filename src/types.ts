@@ -169,7 +169,14 @@ export interface Reservation {
 
 export interface LoadedInstance {
 	id: string;
-	config?: { context_length?: number; parallel?: number };
+	config?: {
+		context_length?: number;
+		parallel?: number;
+		/** LM Studio's per-forward-pass token limit for decision models (#50). Read-only over REST. */
+		physical_batch_size?: number;
+		/** Reported alongside `physical_batch_size`; not the per-pass limit. */
+		eval_batch_size?: number;
+	};
 	remaining_ttl_seconds?: number;
 }
 

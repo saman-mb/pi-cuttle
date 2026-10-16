@@ -42,7 +42,13 @@ The decision model. May be local or cloud.
 | `timeoutMs` | number | `4000` | Classifier timeout before falling back. |
 | `stateChars` | number | `16000` | Characters of the prompt handed to the classifier. |
 
-Example: `{ "model": "lmstudio/openjev-2b", "fallback": "heuristic" }`.
+Example: `{ "model": "lmstudio/vllm-d3-nano", "fallback": "heuristic" }`.
+
+The model part must be an exact `key` from LM Studio's `GET /api/v1/models` catalog (not a
+display name). `/router doctor` checks that it is in the catalog, loads and answers, and
+reports the character budget prompts are trimmed to. Decision models run the whole prompt as
+a single physical batch (default 512 tokens), so `stateChars` is capped to that batch at
+call time regardless of the configured value.
 
 ## `catalog`
 

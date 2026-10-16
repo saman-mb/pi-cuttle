@@ -78,6 +78,15 @@ export interface LocalHost {
 		questions: Record<string, { type: string } & Record<string, unknown>>,
 		options?: { signal?: AbortSignal },
 	): Promise<{ answers: Record<string, SystemOneAnswer>; errorMessage?: string }>;
+	/**
+	 * The model's real per-forward-pass token limit, when the host reports one (#50).
+	 *
+	 * Decision models answer in a single forward pass, so this is the ceiling on the prompt
+	 * they can accept at all. Callers fall back to a conservative default when it is absent,
+	 * which is why this is optional rather than a capability flag: a host that cannot report
+	 * it is not broken, it just cannot be asked this particular question.
+	 */
+	physicalBatchSize?(modelKey: string): Promise<number | undefined>;
 }
 
 export interface SystemOneAnswer {

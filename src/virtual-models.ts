@@ -291,7 +291,7 @@ export async function routeRequest(
 
 	const prompt = lastUserText(request.messages);
 	const forced = rt.getForced?.() ?? rt.pins.get(sessionId) ?? flavorBias(flavor);
-	const decided = await decideTier({ config: rt.config, prompt, ctx, host: rt.host, ...(forced ? { forced } : {}) });
+	const decided = await decideTier({ config: rt.config, prompt, ctx, host: rt.host, log: rt.log, ...(forced ? { forced } : {}) });
 	const decision = applyPolicy(rt.config, decided, phase);
 
 	let tier: Tier = decision.tier;
