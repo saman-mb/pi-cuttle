@@ -3,9 +3,9 @@
  *
  * pi has no extension settings-contribution API, so the router owns this file.
  * `pi.getSettings()` is available for reading pi's own settings, but our schema
- * lives in `model-router.json` and is read directly.
+ * lives in `cuttle.json` and is read directly.
  *
- * Precedence: project `.pi/model-router.json` over user `~/.pi/agent/model-router.json`
+ * Precedence: project `.pi/cuttle.json` over user `~/.pi/agent/cuttle.json`
  * over DEFAULTS. Merge is shallow per top-level section.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -35,10 +35,10 @@ export const DEFAULTS: RouterConfig = {
 		idleUnloadMs: 300_000,
 		preload: true,
 		pinClassifier: true,
-		slotDir: join(homedir(), ".pi", "agent", "model-router", "slots"),
+		slotDir: join(homedir(), ".pi", "agent", "cuttle", "slots"),
 		staleSlotMs: 300_000,
 	},
-	telemetry: { enabled: true, path: join(homedir(), ".pi", "agent", "model-router", "decisions.jsonl"), pricing: {} },
+	telemetry: { enabled: true, path: join(homedir(), ".pi", "agent", "cuttle", "decisions.jsonl"), pricing: {} },
 	lmstudio: { baseUrl: "http://localhost:1235", timeoutMs: 8_000 },
 	ollama: { baseUrl: "http://localhost:11434", timeoutMs: 8_000 },
 	openai: { baseUrl: "http://localhost:8080", timeoutMs: 8_000 },
@@ -48,7 +48,7 @@ export interface LoadedConfig {
 	config: RouterConfig;
 	/** Files that contributed, lowest precedence first. */
 	sources: string[];
-	/** Non-fatal problems, surfaced by `/router status`. */
+	/** Non-fatal problems, surfaced by `/cuttle status`. */
 	warnings: string[];
 }
 
@@ -58,7 +58,7 @@ export function expandHome(p: string): string {
 }
 
 export function configPaths(cwd: string): string[] {
-	return [join(homedir(), ".pi", "agent", "model-router.json"), join(cwd, ".pi", "model-router.json")];
+	return [join(homedir(), ".pi", "agent", "cuttle.json"), join(cwd, ".pi", "cuttle.json")];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -132,19 +132,19 @@ export function loadConfig(cwd: string): LoadedConfig {
 	config.openai.baseUrl = config.openai.baseUrl.replace(/\/+$/, "");
 
 	if (config.catalog.local.length === 0 && config.catalog.cloud.length === 0) {
-		warnings.push("no models configured: set catalog.local and catalog.cloud in model-router.json");
+		warnings.push("no models configured: set catalog.local and catalog.cloud in cuttle.json");
 	}
 	return { config, sources, warnings };
 }
 
-/** Path of the user config file the `/router` command writes to. */
+/** Path of the user config file the `/cuttle` command writes to. */
 export function userConfigPath(): string {
-	return join(homedir(), ".pi", "agent", "model-router.json");
+	return join(homedir(), ".pi", "agent", "cuttle.json");
 }
 
 /**
  * Persist a partial update to the user config file, preserving unknown keys.
- * Used by `/router` so interactive edits survive a restart.
+ * Used by `/cuttle` so interactive edits survive a restart.
  */
 export function saveUserConfig(patch: Record<string, unknown>): string {
 	const path = userConfigPath();

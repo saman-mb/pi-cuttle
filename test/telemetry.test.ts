@@ -12,7 +12,7 @@ let path: string;
 let cfg: TelemetryConfig;
 
 beforeEach(() => {
-	dir = mkdtempSync(join(tmpdir(), "router-telemetry-"));
+	dir = mkdtempSync(join(tmpdir(), "cuttle-telemetry-"));
 	path = join(dir, "decisions.jsonl");
 	cfg = {
 		enabled: true,

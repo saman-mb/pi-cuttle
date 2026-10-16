@@ -1,28 +1,46 @@
 {
-  "name": "pi-model-router",
-  "version": "0.1.0",
-  "description": "Hybrid local/cloud model routing for pi — a local classifier picks the right model per turn, with a cross-process memory governor so subagent fanout cannot exhaust local VRAM.",
+  "name": "pi-cuttle",
+  "version": "0.2.0",
+  "description": "Local-first model routing for pi — a local classifier picks the right model per turn, with a cross-process memory governor so subagent fanout cannot exhaust local VRAM. The pi extension for Cuttle.",
   "type": "module",
   "license": "MIT",
   "author": "Saman Mathew Badakhshan",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/saman-mb/pi-model-router.git"
+    "url": "git+https://github.com/saman-mb/pi-cuttle.git"
   },
-  "homepage": "https://github.com/saman-mb/pi-model-router#readme",
+  "homepage": "https://github.com/saman-mb/pi-cuttle#readme",
   "bugs": {
-    "url": "https://github.com/saman-mb/pi-model-router/issues"
+    "url": "https://github.com/saman-mb/pi-cuttle/issues"
   },
   "keywords": [
     "pi-package",
     "pi",
     "pi-coding-agent",
     "extension",
-    "router",
+    "cuttle",
+    "model-routing",
+    "model-router",
+    "llm-router",
+    "local-first",
+    "hybrid",
+    "classifier",
+    "decision-model",
+    "system-one",
+    "jev",
     "local-llm",
-    "lm-studio"
+    "lm-studio",
+    "ollama",
+    "llama-cpp",
+    "vllm",
+    "openai-compatible",
+    "memory-governor",
+    "vram",
+    "subagents",
+    "cost-optimization"
   ],
   "pi": {
+    "image": "https://raw.githubusercontent.com/saman-mb/cuttle/main/docs/assets/logo.png",
     "extensions": [
       "./src/index.ts"
     ]
@@ -40,7 +58,8 @@
     "test": "node --experimental-strip-types --test test/*.test.ts",
     "eval": "node --experimental-strip-types eval/run.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm test && npm run typecheck"
   },
   "engines": {
     "node": ">=22.6.0"

@@ -2,7 +2,7 @@
  * Decision ledger and savings receipt (#42).
  *
  * Every assistant turn appends one JSONL line: which side served it, which model,
- * and the token usage pi reports. `/router stats` aggregates it into the number the
+ * and the token usage pi reports. `/cuttle stats` aggregates it into the number the
  * whole plugin exists to produce: how much was saved by not sending those turns to
  * the cloud.
  *
@@ -160,7 +160,7 @@ export class Telemetry {
 	}
 }
 
-/** Format a stats window for `/router stats`. */
+/** Format a stats window for `/cuttle stats`. */
 export function formatStats(stats: Stats, baseline?: string): string {
 	if (stats.turns === 0) return `no decisions recorded in the last ${stats.days} day(s)`;
 	const pct = Math.round((stats.localTurns / stats.turns) * 100);

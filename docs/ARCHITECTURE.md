@@ -6,6 +6,22 @@ Route each turn of a pi session to a local or cloud physical model, chosen by a
 local classifier, without thrashing the prompt cache and without letting subagent
 fanout exhaust local memory.
 
+## Relationship to Cuttle
+
+This package is the pi extension for [Cuttle](https://github.com/saman-mb/cuttle), and it is
+where Cuttle's routing was prototyped — the "prototype routing as a pi extension" item in
+Cuttle's brief (phase 00, epic #100). The two share a design, not a code path:
+
+- Nothing here imports Cuttle or Python. `route()` stays self-contained by design (see the
+  invariants below), so a foreground subagent child that never loaded the engine still routes.
+- Nothing here requires Cuttle to be installed, running, or even present.
+- The overlap that must be kept honest: the complexity classes, the escalate-on-struggle rule,
+  and the decision-ledger shape. If one side changes those and the other does not, that is
+  drift, not a variant.
+- **Open question:** whether `decide()` is owned permanently here, or in Cuttle with this
+  extension delegating over the engine's gateway (phase 00 gateway item, #100). Until that is
+  settled, the classification rules in `src/classifier.ts` are authoritative for pi.
+
 ## Verified pi mechanics
 
 Everything here was checked against the pi docs and the installed `pi-subagents`
@@ -61,16 +77,16 @@ or the `pi-subagents` package.
 
 | File | Responsibility |
 |---|---|
-| `src/config.ts` | Load and merge `model-router.json` over defaults. |
+| `src/config.ts` | Load and merge `cuttle.json` over defaults. |
 | `src/host.ts` | `LocalHost` interface + capabilities; `createHost` picks by `config.host`. |
 | `src/lmstudio.ts` | LM Studio adapter (native `/api/v1` management API, System One decisions). |
 | `src/ollama.ts` | ollama adapter (`/api/tags`, `/api/ps`, `keep_alive` load/unload). |
 | `src/openai-host.ts` | Generic OpenAI-compatible adapter (capability floor). |
 | `src/governor.ts` | Cross-process slot broker + loaded-model cooperation (capability-gated). |
 | `src/classifier.ts` | `decideTier`: classifier call via the local host or pi, with heuristic fallback. |
-| `src/virtual-models.ts` | Register `router/auto`, `router/local`, `router/cloud`, `router/fast-local`; `route()` policy + spill. |
-| `src/telemetry.ts` | Decision ledger + `/router stats` aggregation (metadata only). |
-| `src/commands.ts` | `/router` command family (status, init, models, policy, limit, doctor, stats). |
+| `src/virtual-models.ts` | Register `cuttle/auto`, `cuttle/local`, `cuttle/cloud`, `cuttle/fast-local`; `route()` policy + spill. |
+| `src/telemetry.ts` | Decision ledger + `/cuttle stats` aggregation (metadata only). |
+| `src/commands.ts` | `/cuttle` command family (status, init, models, policy, limit, doctor, stats). |
 | `src/index.ts` | Extension factory; wires the above; `message_end` release hook. |
 
 ## Evaluation
@@ -86,8 +102,8 @@ All five questions were answered by running pi 1.2.0. Full evidence is on the cl
 
 | Question | Answer | Consequence |
 |---|---|---|
-| `defaultModel: "router/auto"` resolves at startup? | **No** | Select it on `session_start` via `pi.setModel` (#24). |
+| `defaultModel: "cuttle/auto"` resolves at startup? | **No** | Select it on `session_start` via `pi.setModel` (#24). |
 | `message_end` once per provider request? | **Yes** | Slot release is exact; stale reaping is a safety net (#25). |
-| Extension flags readable in the factory? | **No** | Read `--router-force` lazily in `route()` (#26). |
+| Extension flags readable in the factory? | **No** | Read `--cuttle-force` lazily in `route()` (#26). |
 | LM Studio load accepts a TTL? | **No** | Unload by `instance_id`; TTL is server-side (#27). |
 | Children inherit virtual models? | **Not reliably** | Load the extension via `subagentOnlyExtensions` (#28). |

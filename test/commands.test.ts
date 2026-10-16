@@ -1,5 +1,5 @@
 /**
- * Covers the `/router doctor` and `/router status` capacity reporting (#50, review nit).
+ * Covers the `/cuttle doctor` and `/cuttle status` capacity reporting (#50, review nit).
  *
  * These are quiet strings a human reads once at setup, which is exactly the kind of output
  * that rots unnoticed. `classifierCapacity` is the whole computation behind the `capacity:`

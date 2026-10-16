@@ -2,7 +2,7 @@
 
 ## The problem
 
-`pi-subagents` runs children as pi sessions. A child routes through `router/*` only if the
+`pi-subagents` runs children as pi sessions. A child routes through `cuttle/*` only if the
 router's virtual models are registered in the child's session. There are three loading paths,
 and only one is reliable (verified on pi 1.2.0 + the installed `pi-subagents`):
 
@@ -20,21 +20,21 @@ the parent's model runtime — the queue the child reads is empty. Do not rely o
 
 **Install the router as a pi package so the parent has it too.** pi-subagents resolves the
 child's model against the **parent's** registry at launch preflight; if the router is only in
-`subagentOnlyExtensions` (children-only), the parent cannot resolve `router/auto` and the launch
-fails with `Unknown subagent model 'router/auto' in the active Pi model registry`.
+`subagentOnlyExtensions` (children-only), the parent cannot resolve `cuttle/auto` and the launch
+fails with `Unknown subagent model 'cuttle/auto' in the active Pi model registry`.
 
 ```bash
-pi install git:github.com/saman-mb/pi-model-router
+pi install git:github.com/saman-mb/pi-cuttle
 ```
 
 Then add the router to `subagents.defaultSubagentOnlyExtensions` so every child loads it and
-its `session_start` handler selects `router/auto`:
+its `session_start` handler selects `cuttle/auto`:
 
 ```json
 {
   "subagents": {
-    "defaultModel": "router/auto",
-    "defaultSubagentOnlyExtensions": ["/absolute/path/to/pi-model-router/src/index.ts"]
+    "defaultModel": "cuttle/auto",
+    "defaultSubagentOnlyExtensions": ["/absolute/path/to/pi-cuttle/src/index.ts"]
   }
 }
 ```
@@ -48,25 +48,25 @@ code does not need to know about roles:
 
 | Virtual model | Behaviour |
 |---|---|
-| `router/auto` | Classifier decides per session |
-| `router/local` | Local-preferred; spills to cloud when saturated |
-| `router/cloud` | Always cloud |
-| `router/fast-local` | Local, smallest model first |
+| `cuttle/auto` | Classifier decides per session |
+| `cuttle/local` | Local-preferred; spills to cloud when saturated |
+| `cuttle/cloud` | Always cloud |
+| `cuttle/fast-local` | Local, smallest model first |
 
 ```json
 {
   "subagents": {
     "agentOverrides": {
-      "scout":    { "model": "router/fast-local" },
-      "worker":   { "model": "router/cloud" },
-      "oracle":   { "model": "router/cloud" },
-      "reviewer": { "model": "router/cloud" }
+      "scout":    { "model": "cuttle/fast-local" },
+      "worker":   { "model": "cuttle/cloud" },
+      "oracle":   { "model": "cuttle/cloud" },
+      "reviewer": { "model": "cuttle/cloud" }
     }
   }
 }
 ```
 
-Per-run override still works: `subagent({ agent: "scout", model: "router/local" })`.
+Per-run override still works: `subagent({ agent: "scout", model: "cuttle/local" })`.
 
 ## Memory safety with fanout
 
@@ -80,7 +80,7 @@ Set `local.maxConcurrentByFlavor` to bound a policy independently, e.g.
 ## Diagnostics
 
 ```
-/router          # slots used, models loaded in LM Studio, config sources
+/cuttle          # slots used, models loaded in LM Studio, config sources
 ```
 
 `/subagents-models` shows the resolved role-to-model mapping on the pi-subagents side.

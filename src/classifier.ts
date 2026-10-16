@@ -140,7 +140,7 @@ export const MIN_DECISION_STATE_CHARS = 256;
 
 /**
  * Characters of user prompt a decision model can take in one physical batch, after the fixed
- * wrapper overhead. Pure and exported so `/router doctor` can report it (#50).
+ * wrapper overhead. Pure and exported so `/cuttle doctor` can report it (#50).
  */
 export function decisionStateBudget(physicalBatchSize = DEFAULT_PHYSICAL_BATCH_TOKENS): number {
 	// A zero or non-finite batch means the host reported nothing usable, not that the model can
