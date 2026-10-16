@@ -39,6 +39,11 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Earliest TTL among a model's instances; models without a TTL sort last. */
+function minTtl(model: { instances: { remaining_ttl_seconds?: number }[] }): number {
+	return Math.min(...model.instances.map((i) => i.remaining_ttl_seconds ?? Number.POSITIVE_INFINITY));
+}
+
 export class LocalGovernor {
 	/** Reservations this process holds, grouped by model. */
 	private readonly held = new Map<string, Reservation[]>();
@@ -190,22 +195,28 @@ export class LocalGovernor {
 		} catch {
 			return [];
 		}
-		const candidates = loaded
-			.filter((m) => m.key !== keepKey)
-			.flatMap((m) => m.instances.map((i) => ({ key: m.key, id: i.id, ttl: i.remaining_ttl_seconds ?? Number.POSITIVE_INFINITY })))
-			.sort((a, b) => a.ttl - b.ttl);
+		const others = loaded.filter((m) => m.key !== keepKey);
+		// The target needs a slot of its own, so leave room for it whether or not it is
+		// currently loaded. Without keepKey this is a plain ceiling on everything loaded.
+		const allowedOthers = keepKey ? Math.max(0, this.cfg.maxLoadedModels - 1) : this.cfg.maxLoadedModels;
+		if (others.length <= allowedOthers) return [];
+		// Evict whole models, closest to TTL first. A model may have several instances
+		// (LM Studio JIT-loads one per concurrent request); unloading one instance does not
+		// free the model, so every instance of a chosen victim must go.
+		const ordered = [...others].sort((a, b) => minTtl(a) - minTtl(b));
 		const unloaded: string[] = [];
-		let count = loaded.length;
-		while (count > this.cfg.maxLoadedModels && candidates.length > 0) {
-			const victim = candidates.shift();
-			if (!victim) break;
-			try {
-				await this.lm.unload(victim.id);
-				unloaded.push(victim.key);
-				count -= 1;
-			} catch {
-				break;
+		let remaining = others.length;
+		for (const victim of ordered) {
+			if (remaining <= allowedOthers) break;
+			for (const instance of victim.instances) {
+				try {
+					await this.lm.unload(instance.id);
+				} catch {
+					/* keep going; a failed unload is caught by the acquire() ceiling check */
+				}
 			}
+			unloaded.push(victim.key);
+			remaining -= 1;
 		}
 		return unloaded;
 	}

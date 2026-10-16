@@ -118,3 +118,44 @@ test("enforceLoadedCeiling is a no-op when the ceiling is disabled", async () =>
 	assert.deepEqual(await new LocalGovernor(cfg, lm).enforceLoadedCeiling(), []);
 	assert.equal(unloads.length, 0);
 });
+
+test("enforceLoadedCeiling frees a slot when the target is not loaded (#30)", async () => {
+	cfg = { ...cfg, maxLoadedModels: 1 };
+	const unloads: string[] = [];
+	const lm = {
+		loaded: async () => [{ key: "lmstudio/other", instances: [{ id: "lmstudio/other" }] }],
+		unload: async (id: string) => void unloads.push(id),
+	} as unknown as LmStudioClient;
+	const gov = new LocalGovernor(cfg, lm);
+	assert.deepEqual(await gov.enforceLoadedCeiling("lmstudio/target"), ["lmstudio/other"]);
+	assert.deepEqual(unloads, ["lmstudio/other"]);
+});
+
+test("enforceLoadedCeiling keeps one other when the target is already loaded", async () => {
+	cfg = { ...cfg, maxLoadedModels: 2 };
+	const unloads: string[] = [];
+	const lm = {
+		loaded: async () => [
+			{ key: "lmstudio/target", instances: [{ id: "lmstudio/target" }] },
+			{ key: "lmstudio/a", instances: [{ id: "lmstudio/a" }] },
+			{ key: "lmstudio/b", instances: [{ id: "lmstudio/b" }] },
+		],
+		unload: async (id: string) => void unloads.push(id),
+	} as unknown as LmStudioClient;
+	const gov = new LocalGovernor(cfg, lm);
+	const unloaded = await gov.enforceLoadedCeiling("lmstudio/target");
+	assert.equal(unloaded.length, 1, "cap 2 means one other plus the target");
+	assert.equal(unloads.length, 1);
+});
+
+test("enforceLoadedCeiling unloads every instance of a victim model (#30)", async () => {
+	cfg = { ...cfg, maxLoadedModels: 1 };
+	const unloads: string[] = [];
+	const lm = {
+		loaded: async () => [{ key: "other", instances: [{ id: "other:1" }, { id: "other:2" }, { id: "other:3" }] }],
+		unload: async (id: string) => void unloads.push(id),
+	} as unknown as LmStudioClient;
+	const gov = new LocalGovernor(cfg, lm);
+	assert.deepEqual(await gov.enforceLoadedCeiling("target"), ["other"]);
+	assert.deepEqual(unloads, ["other:1", "other:2", "other:3"], "all instances of the victim must go");
+});

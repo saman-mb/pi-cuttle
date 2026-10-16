@@ -85,6 +85,7 @@ export async function decideTier(input: {
 	if (!parsed) return heuristicDecision(config, prompt);
 
 	const clipped = prompt.slice(0, config.classifier.stateChars);
+	let classifierError: string | undefined;
 	try {
 		let answer: string | undefined;
 		if (parsed.provider === "lmstudio") {
@@ -143,12 +144,20 @@ export async function decideTier(input: {
 
 		const tier = answer === undefined ? undefined : parseTier(answer);
 		if (tier) return { tier, score: tier === "cloud" ? 1 : 0, source: "classifier", reason: `classifier said ${tier}` };
-	} catch {
-		/* fall through to fallback */
+	} catch (error) {
+		classifierError = error instanceof Error ? error.message : String(error);
 	}
 
-	if (config.classifier.fallback === "heuristic") return heuristicDecision(config, prompt);
-	return { tier: config.classifier.fallback, score: 0, source: "heuristic", reason: `classifier unavailable, fallback ${config.classifier.fallback}` };
+	if (config.classifier.fallback === "heuristic") {
+		const fallback = heuristicDecision(config, prompt);
+		return { ...fallback, reason: `${fallback.reason} (classifier failed: ${classifierError ?? "no answer"})` };
+	}
+	return {
+		tier: config.classifier.fallback,
+		score: 0,
+		source: "heuristic",
+		reason: `classifier unavailable (${classifierError ?? "no answer"}), fallback ${config.classifier.fallback}`,
+	};
 }
 
 /**

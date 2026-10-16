@@ -7,6 +7,7 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 import { saveUserConfig, type LoadedConfig } from "./config.ts";
+import { splitRef } from "./classifier.ts";
 import type { RouterRuntime } from "./virtual-models.ts";
 import type { PolicyMode, Tier } from "./types.ts";
 
@@ -72,6 +73,56 @@ async function editLocalLimit(rt: RouterRuntime, ctx: ExtensionCommandContext): 
 	ctx.ui.notify(`router: maxConcurrent -> ${Math.floor(value)}\nwritten to ${path}`, "info");
 }
 
+async function doctor(rt: RouterRuntime, ctx: ExtensionCommandContext): Promise<void> {
+	const lines: string[] = [];
+	const up = await rt.lm.healthy();
+	lines.push(`LM Studio: ${up ? "reachable" : "UNREACHABLE"} (${rt.config.lmstudio.baseUrl})`);
+
+	const ref = rt.config.classifier.model;
+	if (!ref) {
+		lines.push("classifier: none configured -> heuristic");
+	} else {
+		const parsed = splitRef(ref);
+		if (!parsed) {
+			lines.push(`classifier: FAIL invalid ref '${ref}'`);
+		} else if (parsed.provider === "lmstudio") {
+			const type = await rt.lm.modelType(parsed.id);
+			if (!type) {
+				lines.push(`classifier: FAIL '${parsed.id}' is not in the LM Studio catalog`);
+			} else {
+				const start = Date.now();
+				try {
+					if (type === "decision") {
+						const result = await rt.lm.systemOne(
+							parsed.id,
+							{ prompt: "doctor probe" },
+							{ complexity: { type: "choice", instructions: "Trivial probe.", criteria: { standard: "the probe", complex: "the probe" } } },
+						);
+						if (!result.answers.complexity) throw new Error("no answer returned");
+					} else {
+						await rt.lm.chat(parsed.id, "Reply with one word.", { maxTokens: 4 });
+					}
+					lines.push(`classifier: PASS ${parsed.id} (${type}) ${Date.now() - start}ms`);
+				} catch (error) {
+					lines.push(`classifier: FAIL ${parsed.id} (${type}) — ${error instanceof Error ? error.message : String(error)}`);
+					lines.push("  fix: load it in LM Studio, pick another decision model, or remove classifier.model for heuristic");
+				}
+			}
+		} else {
+			const model = ctx.modelRegistry.findOfType("classifier", parsed.provider, parsed.id);
+			lines.push(`classifier: ${model ? "registered" : "FAIL not in catalog"} ${ref}`);
+		}
+	}
+
+	const gov = await rt.governor.status();
+	lines.push(`slots: ${gov.slots.length}/${gov.localMax} used; loaded: ${gov.loadedModels.map((m) => m.key).join(", ") || "(none)"}`);
+	lines.push(`slotDir: ${rt.config.local.slotDir}`);
+	if (ref?.startsWith("lmstudio/") && rt.config.local.maxLoadedModels > 0 && rt.config.local.maxLoadedModels < 2) {
+		lines.push("warning: a local classifier plus maxLoadedModels < 2 can evict the target; set maxLoadedModels >= 2");
+	}
+	ctx.ui.notify(lines.join("\n"), "info");
+}
+
 async function status(rt: RouterRuntime, loaded: LoadedConfig, ctx: ExtensionCommandContext): Promise<void> {
 	const governor = await rt.governor.status();
 	const pinned = rt.pins.get(ctx.sessionManager.getSessionId());
@@ -106,6 +157,7 @@ export function registerRouterCommand(pi: ExtensionAPI, rt: RouterRuntime, loade
 			if (sub === "models") return editModels(rt, ctx);
 			if (sub === "policy") return editPolicy(rt, ctx);
 			if (sub === "limit") return editLocalLimit(rt, ctx);
+			if (sub === "doctor") return doctor(rt, ctx);
 			return status(rt, loaded, ctx);
 		},
 	});

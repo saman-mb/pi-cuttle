@@ -55,9 +55,15 @@ Memory governance. See [ARCHITECTURE.md](ARCHITECTURE.md) for why this is filesy
 | `maxLoadedModels` | number | `1` | Cooperative ceiling on models loaded in LM Studio. |
 | `onFull` | `"spill"` \| `"wait"` | `"spill"` | Route to cloud immediately, or wait for a slot. |
 | `waitMs` | number | `20000` | Wait budget before spilling when `onFull: "wait"`. |
-| `idleUnloadMs` | number | `300000` | Ask LM Studio to unload idle instances (not yet implemented). |
+| `idleUnloadMs` | number | `300000` | Reserved; LM Studio owns the TTL (see #27). |
 | `slotDir` | string | `~/.pi/agent/model-router/slots` | Where slot files live. `~` expands. |
 | `staleSlotMs` | number | `300000` | A slot older than this is reaped. |
+
+**Local classifier:** if `classifier.model` is an `lmstudio/…` model, set `maxLoadedModels`
+to **at least 2**. At `1` the classifier and the target model evict each other every turn —
+the classifier is unloaded to make room for the target, then reloaded for the next decision.
+When the ceiling is reached and the target is not loaded, the governor unloads other models
+(all instances of them) to free a slot; `/router doctor` warns when this is misconfigured.
 
 ## `lmstudio`
 

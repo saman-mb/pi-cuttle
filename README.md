@@ -92,6 +92,7 @@ Interactive editing (persists to the user config file):
 
 ```
 /router                 # status: slots, loaded models, config sources
+/router doctor          # probe LM Studio + the classifier end to end
 /router models          # pick the local, cloud, or decision model
 /router policy          # complexity | cost | phase
 /router limit           # max concurrent local requests

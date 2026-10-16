@@ -129,3 +129,20 @@ test("a failing classifier falls back to the heuristic", async () => {
 	assert.equal(d.source, "heuristic");
 	assert.equal(d.tier, "local");
 });
+
+test("fallback reason surfaces the classifier error (#29)", async () => {
+	const lm = fakeLm({
+		modelType: async () => "decision",
+		systemOne: async () => {
+			throw new Error("Failed to load decision model 'decision-2.0-kai-0.6b'");
+		},
+	});
+	const d = await decideTier({
+		config: { ...DEFAULTS, classifier: { ...DEFAULTS.classifier, model: "lmstudio/decision-2.0-kai-0.6b" } },
+		prompt: "rename a variable",
+		ctx,
+		lm,
+	});
+	assert.equal(d.source, "heuristic");
+	assert.match(d.reason, /Failed to load decision model/);
+});
