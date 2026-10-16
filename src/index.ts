@@ -77,9 +77,12 @@ export default function modelRouter(pi: ExtensionAPI): void {
 	});
 
 	// #25: exactly one message_end per assistant message, so this releases exactly once.
+	// #38: release for ANY provider. Slots are keyed by model id and only ever exist for
+	// local models, so a cloud message is a harmless no-op; the old `provider === "lmstudio"`
+	// guard leaked slots for ollama/llama.cpp-served local models.
 	pi.on("message_end", (event) => {
-		const message = event.message as { role?: string; provider?: string; model?: string };
-		if (message.role !== "assistant" || message.provider !== "lmstudio" || !message.model) return;
+		const message = event.message as { role?: string; model?: string };
+		if (message.role !== "assistant" || !message.model) return;
 		governor.releaseOne(message.model);
 	});
 

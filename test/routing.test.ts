@@ -18,28 +18,37 @@ function config(overrides: Partial<RouterConfig> = {}): RouterConfig {
 	return Object.assign(base, overrides);
 }
 
-function ctxWith(opts: { window?: number; tokens?: number | null } = {}): ExtensionContext {
+function ctxWith(opts: { window?: number; tokens?: number | null; missingLocal?: boolean } = {}): ExtensionContext {
 	return {
 		sessionManager: { getSessionId: () => "s1" },
 		modelRegistry: {
-			find: (provider: string, id: string) => ({ provider, id, contextWindow: opts.window ?? 100_000 }),
+			find: (provider: string, id: string) => {
+				if (opts.missingLocal && provider === "lmstudio") return undefined;
+				return { provider, id, contextWindow: opts.window ?? 100_000 };
+			},
 		},
 		getContextUsage: () => ({ tokens: opts.tokens ?? 10, contextWindow: opts.window ?? 100_000, percent: 0.01 }),
 	} as unknown as ExtensionContext;
 }
 
-function runtime(cfg: RouterConfig, grant = true): { rt: RouterRuntime; acquired: string[] } {
+function runtime(cfg: RouterConfig, grant = true): { rt: RouterRuntime; acquired: string[]; released: string[] } {
 	const acquired: string[] = [];
+	const released: string[] = [];
 	const governor = {
 		acquire: async (key: string, o?: { flavor?: string }) => {
 			if (!grant) return null;
 			acquired.push(`${key}:${o?.flavor ?? ""}`);
 			return { id: "r1", modelKey: key, file: "", pid: 1, startedAt: 0, flavor: o?.flavor };
 		},
+		release: (res: { modelKey: string }) => void released.push(res.modelKey),
+		releaseOne: (key: string) => {
+			released.push(key);
+			return true;
+		},
 		enforceLoadedCeiling: async () => [],
 	} as unknown as LocalGovernor;
 	const rt: RouterRuntime = { config: cfg, host: {} as LocalHost, governor, pins: new Map(), sizes: new Map() };
-	return { rt, acquired };
+	return { rt, acquired, released };
 }
 
 const baseReq = { model: { id: "auto" }, thinkingLevel: "high" as const, messages: USER };
@@ -148,4 +157,59 @@ test("a read-only continuation does not flip the phase (#36)", async () => {
 	const state = { tier: "cloud" as const, modelId: "cloud/big", phase: "planning" as const, decision: { source: "heuristic" as const, reason: "prior" } };
 	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "continuation", state, messages: READ_CALL } as never, ctxWith());
 	assert.equal(route.state, state, "state untouched");
+});
+
+test("retry escalation records the degradation so the next user turn re-decides (#37)", async () => {
+	const cfg = config();
+	const { rt } = runtime(cfg);
+	const request = {
+		...baseReq,
+		reason: "retry" as const,
+		failed: {
+			model: { provider: "lmstudio", id: "local-model" },
+			message: { provider: "lmstudio", model: "local-model", errorMessage: "ECONNREFUSED" },
+		},
+	};
+	const route = await routeRequest(rt, "auto", request as never, ctxWith());
+	assert.equal(route.state?.tier, "cloud");
+	assert.equal(route.state?.degradedFrom, "local");
+});
+
+test("a degraded session re-classifies on the next user turn and recovers to local (#37)", async () => {
+	const cfg = config();
+	const { rt } = runtime(cfg);
+	const degraded = {
+		tier: "cloud" as const,
+		modelId: "cloud/big",
+		phase: "planning" as const,
+		decision: { source: "heuristic" as const, reason: "retry: local failure" },
+		degradedFrom: "local" as const,
+	};
+	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "user", state: degraded } as never, ctxWith());
+	assert.equal(route.state?.tier, "local", "mechanical prompt recovers to local");
+	assert.equal(route.state?.degradedFrom, undefined, "degradation cleared");
+});
+
+test("a degraded session stays cloud on a continuation without re-deciding (#37)", async () => {
+	const cfg = config();
+	const { rt } = runtime(cfg);
+	const degraded = {
+		tier: "cloud" as const,
+		modelId: "cloud/big",
+		phase: "planning" as const,
+		decision: { source: "heuristic" as const, reason: "retry: local failure" },
+		degradedFrom: "local" as const,
+	};
+	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "continuation", state: degraded } as never, ctxWith());
+	assert.equal(route.state, degraded, "continuation keeps cloud without burning a classifier call");
+});
+
+test("a slot is released when the local target cannot be resolved (#39)", async () => {
+	const cfg = config();
+	const { rt, released } = runtime(cfg);
+	await assert.rejects(
+		() => routeRequest(rt, "auto", { ...baseReq, reason: "user" } as never, ctxWith({ missingLocal: true })),
+		/not in the catalog/,
+	);
+	assert.deepEqual(released, ["local-model"], "acquired slot given back on resolve failure");
 });

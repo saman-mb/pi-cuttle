@@ -105,6 +105,8 @@ export interface RouterState {
 	modelId: string;
 	/** Phase for the plan/implement split; `planning` until the first edit. */
 	phase: "planning" | "implementation";
+	/** Set when a local failure escalated this session; the next user turn re-decides (#37). */
+	degradedFrom?: Tier;
 	decision: {
 		source: "classifier" | "heuristic" | "pin";
 		score?: number;

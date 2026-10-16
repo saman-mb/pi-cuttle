@@ -166,3 +166,14 @@ test("enforceLoadedCeiling unloads every instance of a victim model (#30)", asyn
 	assert.deepEqual(await gov.enforceLoadedCeiling("target"), ["other"]);
 	assert.deepEqual(unloads, ["other:1", "other:2", "other:3"], "all instances of the victim must go");
 });
+
+test("releaseOne matches by model key regardless of provider, false when nothing held (#38)", async () => {
+	const gov = new LocalGovernor(cfg, fakeHost());
+	const res = await gov.acquire("qwen3:8b");
+	assert.ok(res);
+	// A cloud-message no-op must not throw and must report false.
+	assert.equal(gov.releaseOne("some/cloud-model"), false);
+	// The local model is released by its bare message id, as delivered by message_end.
+	assert.equal(gov.releaseOne("qwen3:8b"), true);
+	assert.equal(gov.live().length, 0);
+});

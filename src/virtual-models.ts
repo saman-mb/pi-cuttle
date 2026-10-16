@@ -21,7 +21,7 @@ import type { ExtensionAPI, ExtensionContext, ModelRoute, ModelRouteRequest } fr
 import { applyPolicy, decideTier, detectPhase, splitRef } from "./classifier.ts";
 import type { LocalGovernor } from "./governor.ts";
 import type { LocalHost } from "./host.ts";
-import type { RouterConfig, RouterFlavor, RouterState, Tier } from "./types.ts";
+import type { Reservation, RouterConfig, RouterFlavor, RouterState, Tier } from "./types.ts";
 
 export interface RouterRuntime {
 	config: RouterConfig;
@@ -96,17 +96,17 @@ async function ensureLocalSlot(
 	ctx: ExtensionContext,
 	flavor: RouterFlavor,
 	sessionId: string,
-): Promise<string | undefined> {
+): Promise<{ spill?: string; reservation?: Reservation }> {
 	const modelKey = pickLocal(rt.config, flavor, rt.sizes);
-	if (!modelKey) return "no local model configured";
-	if (!fitsLocalWindow(rt, ctx, flavor)) return "context exceeds local window";
+	if (!modelKey) return { spill: "no local model configured" };
+	if (!fitsLocalWindow(rt, ctx, flavor)) return { spill: "context exceeds local window" };
 	// Hosts report loaded state and assistant messages by bare model id, with no provider
 	// prefix. Key the slot by that same id so acquire/release and the ceiling all agree.
 	const bareKey = splitRef(modelKey)?.id ?? modelKey;
 	if (rt.config.local.maxLoadedModels > 0) await rt.governor.enforceLoadedCeiling(bareKey);
 	const reservation = await rt.governor.acquire(bareKey, { sessionId, flavor });
-	if (!reservation) return "local full, spilled to cloud";
-	return undefined;
+	if (!reservation) return { spill: "local full, spilled to cloud" };
+	return { reservation };
 }
 
 /** Can the whole conversation fit the local model's window? (#15) */
@@ -148,11 +148,16 @@ export async function routeRequest(
 		const failed = request.failed;
 		const cloudRef = pickCloud(rt.config);
 		if (cloudRef && looksLikeLocalFailure(failed.model.provider, failed.message.errorMessage)) {
+			// The failed local attempt holds a slot in this process; free it as we escalate.
+			rt.governor.releaseOne(failed.model.id);
 			const next: RouterState = {
 				tier: "cloud",
 				modelId: cloudRef,
 				phase,
 				decision: { source: "heuristic", reason: `retry: ${failed.model.provider} failure, switched to cloud` },
+				// #37: remember this was a failure escalation, so the next user turn re-decides
+				// instead of the session paying cloud prices until it ends.
+				degradedFrom: "local",
 			};
 			return resolveModel(ctx, cloudRef, thinking, next);
 		}
@@ -163,8 +168,11 @@ export async function routeRequest(
 		return resolveModel(ctx, sameRef, thinking, next);
 	}
 
+	// #37: a session degraded by a local failure re-decides on the next user turn, so one
+	// transient hiccup does not pin it to cloud prices for good. Everything else stays sticky.
+	const recovering = state?.degradedFrom !== undefined && request.reason === "user";
 	// Sticky within a session unless policy says re-classify every user turn (#12).
-	const reclassify = rt.config.policy.reclassify === "turn" && request.reason === "user";
+	const reclassify = (rt.config.policy.reclassify === "turn" || recovering) && request.reason === "user";
 	if (state && !reclassify) {
 		// #36: planning ends at the first file-mutating tool call. Flip the phase and, under
 		// phase policy, let the tier follow it — the one place a sticky session changes tier
@@ -179,9 +187,11 @@ export async function routeRequest(
 				);
 				let tier = flipped.tier;
 				const reason = `${flipped.reason}; phase -> ${detected}`;
+				let held: Reservation | undefined;
 				if (tier === "local" && state.tier !== "local") {
-					const spill = await ensureLocalSlot(rt, ctx, flavor, sessionId);
-					if (spill) tier = "cloud";
+					const reserved = await ensureLocalSlot(rt, ctx, flavor, sessionId);
+					if (reserved.spill) tier = "cloud";
+					else held = reserved.reservation;
 				}
 				const ref = tier === "local" ? pickLocal(rt.config, flavor, rt.sizes) : pickCloud(rt.config);
 				rt.log?.(`route phase-flip ${state.phase} -> ${detected} tier=${tier} ref=${ref}`);
@@ -191,7 +201,12 @@ export async function routeRequest(
 					phase: detected,
 					decision: { ...state.decision, reason },
 				};
-				return resolveModel(ctx, ref, thinking, next);
+				try {
+					return resolveModel(ctx, ref, thinking, next);
+				} catch (error) {
+					if (held) rt.governor.release(held);
+					throw error;
+				}
 			}
 		}
 		const ref = state.tier === "local" ? pickLocal(rt.config, flavor, rt.sizes) : pickCloud(rt.config);
@@ -207,11 +222,14 @@ export async function routeRequest(
 	const reasons: string[] = [decision.reason];
 
 	// Local side: reserve a slot or spill to cloud.
+	let held: Reservation | undefined;
 	if (tier === "local") {
-		const spill = await ensureLocalSlot(rt, ctx, flavor, sessionId);
-		if (spill) {
+		const reserved = await ensureLocalSlot(rt, ctx, flavor, sessionId);
+		if (reserved.spill) {
 			tier = "cloud";
-			reasons.push(spill);
+			reasons.push(reserved.spill);
+		} else {
+			held = reserved.reservation;
 		}
 	}
 
@@ -223,7 +241,14 @@ export async function routeRequest(
 		phase,
 		decision: { source: decision.source, ...(decision.score !== undefined ? { score: decision.score } : {}), reason: reasons.join("; ") },
 	};
-	return resolveModel(ctx, ref, thinking, next);
+	// #39: if the target cannot be resolved after the slot was taken, give it back instead
+	// of leaking it until stale reaping.
+	try {
+		return resolveModel(ctx, ref, thinking, next);
+	} catch (error) {
+		if (held) rt.governor.release(held);
+		throw error;
+	}
 }
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
