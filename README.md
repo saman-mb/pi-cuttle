@@ -7,6 +7,9 @@ Type one prompt. A local classifier decides whether the work belongs on a local 
 session by default**, not per request, so it does not thrash the prompt cache. A
 cross-process memory governor stops subagent fanout from loading ten local models at once.
 
+**Host-agnostic:** local models are served by whichever server you already run —
+LM Studio, ollama, or any OpenAI-compatible host (llama.cpp, vLLM, …).
+
 - **What changes** — You select one virtual model (`router/auto`); the router dispatches each
   turn to the right physical model. Local, cloud, or let the classifier decide.
 - **Why it matters** — Most coding turns are mechanical and do not justify frontier-model cost.
@@ -67,6 +70,7 @@ A single file, `~/.pi/agent/model-router.json` (project `.pi/model-router.json` 
 
 ```json
 {
+  "host": "lmstudio",
   "autoSelect": true,
   "classifier": { "model": "lmstudio/decision-2.0-kai-0.6b", "fallback": "heuristic" },
   "catalog": {
@@ -78,8 +82,25 @@ A single file, `~/.pi/agent/model-router.json` (project `.pi/model-router.json` 
 }
 ```
 
+### Hosts
+
+The router talks to each host's native API so the governor can see loaded models and
+evict under a ceiling. Capabilities differ, and the router degrades explicitly:
+
+| Host | Inventory | Loaded list | Load/unload | Sizes | Decision models |
+|---|---|---|---|---|---|
+| LM Studio | ✅ | ✅ | ✅ | ✅ | ✅ System One |
+| ollama | ✅ | ✅ | ✅ `keep_alive` | ✅ | ✖ (chat prompt) |
+| OpenAI-compatible (llama.cpp, vLLM, …) | ✅ | ✖ | ✖ | ✖ | ✖ |
+
+On hosts without loaded-model introspection the governor still caps concurrency via
+cross-process slot files; it just cannot cooperate with the host's memory policy.
+Set `host` to `ollama` or `openai` and the matching section's `baseUrl` (defaults:
+`http://localhost:11434`, `http://localhost:8080`). See [docs/CONFIG.md](docs/CONFIG.md).
+
 | Field | Meaning |
 |---|---|
+| `host` | `lmstudio` \| `ollama` \| `openai` — which local server serves `catalog.local`. |
 | `autoSelect` | Select `router/auto` at session start (unless `--model` was passed). |
 | `classifier.model` | `provider/model` of the decision model. `lmstudio/…` is called locally. |
 | `classifier.fallback` | `heuristic` \| `local` \| `cloud` when the classifier is unavailable. |

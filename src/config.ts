@@ -12,9 +12,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-import type { RouterConfig } from "./types.ts";
+import type { HostCapabilities, RouterConfig } from "./types.ts";
 
 export const DEFAULTS: RouterConfig = {
+	host: "lmstudio",
 	autoSelect: true,
 	classifier: { fallback: "heuristic", timeoutMs: 4000, stateChars: 16_000 },
 	catalog: { local: [], cloud: [] },
@@ -30,6 +31,8 @@ export const DEFAULTS: RouterConfig = {
 		staleSlotMs: 300_000,
 	},
 	lmstudio: { baseUrl: "http://localhost:1235", timeoutMs: 8_000 },
+	ollama: { baseUrl: "http://localhost:11434", timeoutMs: 8_000 },
+	openai: { baseUrl: "http://localhost:8080", timeoutMs: 8_000 },
 };
 
 export interface LoadedConfig {
@@ -62,13 +65,18 @@ function mergeSection<T extends object>(base: T, patch: unknown): T {
 /** Apply one parsed JSON object over a config, section by section. Exported for tests. */
 export function applyOverrides(config: RouterConfig, parsed: unknown): RouterConfig {
 	if (!isRecord(parsed)) return config;
+	const host =
+		parsed.host === "lmstudio" || parsed.host === "ollama" || parsed.host === "openai" ? parsed.host : config.host;
 	return {
+		host,
 		autoSelect: typeof parsed.autoSelect === "boolean" ? parsed.autoSelect : config.autoSelect,
 		classifier: mergeSection(config.classifier, parsed.classifier),
 		catalog: mergeSection(config.catalog, parsed.catalog),
 		policy: mergeSection(config.policy, parsed.policy),
 		local: mergeSection(config.local, parsed.local),
 		lmstudio: mergeSection(config.lmstudio, parsed.lmstudio),
+		ollama: mergeSection(config.ollama, parsed.ollama),
+		openai: mergeSection(config.openai, parsed.openai),
 	};
 }
 
@@ -90,11 +98,16 @@ export function loadConfig(cwd: string): LoadedConfig {
 			warnings.push(`${path}: expected a JSON object`);
 			continue;
 		}
+		if ("host" in parsed && !["lmstudio", "ollama", "openai"].includes(parsed.host as string)) {
+			warnings.push(`${path}: unknown host '${String(parsed.host)}', expected lmstudio|ollama|openai`);
+		}
 		config = applyOverrides(config, parsed);
 		sources.push(resolve(path));	}
 
 	config.local.slotDir = resolve(expandHome(config.local.slotDir));
 	config.lmstudio.baseUrl = config.lmstudio.baseUrl.replace(/\/+$/, "");
+	config.ollama.baseUrl = config.ollama.baseUrl.replace(/\/+$/, "");
+	config.openai.baseUrl = config.openai.baseUrl.replace(/\/+$/, "");
 
 	if (config.catalog.local.length === 0 && config.catalog.cloud.length === 0) {
 		warnings.push("no models configured: set catalog.local and catalog.cloud in model-router.json");

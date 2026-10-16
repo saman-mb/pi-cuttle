@@ -14,14 +14,18 @@
  * Note: `/api/v0/models` reports `loaded_instances: null` even for loaded models.
  * Use `/api/v1/models` as the source of truth for loaded state.
  */
-import type { LoadedInstance, LmModel, LmStudioConfig } from "./types.ts";
+import type { HostChatOptions, HostModel, LocalHost, SystemOneAnswer } from "./host.ts";
+import type { LoadedInstance, LmStudioConfig } from "./types.ts";
 
 interface ChatResponse {
 	choices?: { message?: { content?: string } }[];
 }
 
-export class LmStudioClient {
-	private readonly cfg: LmStudioConfig;
+export class LmStudioHost implements LocalHost {
+	readonly kind = "lmstudio" as const;
+	readonly capabilities = { canListLoaded: true, canLoadUnload: true, hasDecisionModels: true, hasModelSizes: true };
+
+		private readonly cfg: LmStudioConfig;
 
 	constructor(cfg: LmStudioConfig) {
 		this.cfg = cfg;
@@ -54,8 +58,8 @@ export class LmStudioClient {
 		}
 	}
 
-	async list(): Promise<LmModel[]> {
-		const body = await this.request<{ models?: LmModel[]; data?: LmModel[] }>("/api/v1/models");
+	async list(): Promise<HostModel[]> {
+		const body = await this.request<{ models?: HostModel[]; data?: HostModel[] }>("/api/v1/models");
 		return body.models ?? body.data ?? [];
 	}
 
@@ -81,8 +85,7 @@ export class LmStudioClient {
 		});
 	}
 
-	/** One-shot chat completion, used by the local classifier for chat models. */
-	async chat(modelKey: string, prompt: string, options: { maxTokens?: number; signal?: AbortSignal } = {}): Promise<string> {
+	async chat(modelKey: string, prompt: string, options: HostChatOptions = {}): Promise<string> {
 		const body = await this.request<ChatResponse>("/api/v1/chat", {
 			method: "POST",
 			body: JSON.stringify({
@@ -118,7 +121,7 @@ export class LmStudioClient {
 		state: Record<string, unknown>,
 		questions: Record<string, { type: string } & Record<string, unknown>>,
 		options: { signal?: AbortSignal } = {},
-	): Promise<{ answers: Record<string, SystemOneAnswer>; errorMessage?: string }> {
+		): Promise<{ answers: Record<string, SystemOneAnswer>; errorMessage?: string }> {
 		const wire = Object.fromEntries(
 			Object.entries(questions).map(([id, q]) => [id, q.type === "bool" ? { ...q, type: "noul" } : q]),
 		);
@@ -129,13 +132,4 @@ export class LmStudioClient {
 		});
 		return { answers: body.answers ?? {} };
 	}
-}
-
-export interface SystemOneAnswer {
-	type?: string;
-	choice?: string;
-	probabilities?: Record<string, number>;
-	confidence?: number;
-	score?: number;
-	noul?: number;
 }

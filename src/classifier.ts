@@ -11,7 +11,7 @@
  */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import type { LmStudioClient } from "./lmstudio.ts";
+import type { LocalHost } from "./host.ts";
 import type { Decision, RouterConfig, Tier } from "./types.ts";
 
 /** Signals that lean local (mechanical, small, cheap) vs cloud (design, ambiguous). */
@@ -35,6 +35,14 @@ function heuristicDecision(config: RouterConfig, prompt: string): Decision {
 	const tier: Tier = score >= config.policy.threshold ? "cloud" : "local";
 	return { tier, score, source: "heuristic", reason };
 }
+
+/** Providers whose models are served by the *local* host, so the classifier call is free. */
+/** True when `provider` names a local host token, so the classifier call is free. */
+export function isLocalProvider(provider: string): boolean {
+	return LOCAL_PROVIDERS.has(provider);
+}
+
+const LOCAL_PROVIDERS = new Set<string>(["lmstudio", "ollama", "openai", "llama.cpp", "llamacpp", "vllm"]);
 
 /** Parse `provider/id` where `id` may itself contain slashes (e.g. Hugging Face ids). */
 export function splitRef(ref: string): { provider: string; id: string } | undefined {
@@ -72,10 +80,10 @@ export async function decideTier(input: {
 	config: RouterConfig;
 	prompt: string;
 	ctx: ExtensionContext;
-	lm: LmStudioClient;
+	host: LocalHost;
 	forced?: Tier;
 }): Promise<Decision> {
-	const { config, prompt, ctx, lm, forced } = input;
+	const { config, prompt, ctx, host, forced } = input;
 	if (forced) return { tier: forced, score: 0, source: "pin", reason: `pinned ${forced}` };
 	if (config.classifier.fallback === "heuristic" && !config.classifier.model) return heuristicDecision(config, prompt);
 
@@ -88,12 +96,13 @@ export async function decideTier(input: {
 	let classifierError: string | undefined;
 	try {
 		let answer: string | undefined;
-		if (parsed.provider === "lmstudio") {
+		if (LOCAL_PROVIDERS.has(parsed.provider)) {
+			// The provider names a local host, so the decision itself costs nothing.
 			const signal = AbortSignal.timeout(config.classifier.timeoutMs);
-			const type = await lm.modelType(parsed.id);
-			if (type === "decision") {
+			const type = (await host.modelType?.(parsed.id)) ?? undefined;
+			if (type === "decision" && host.capabilities.hasDecisionModels && host.systemOne) {
 				// A Jev-style decision model: ask it a typed question over the System One API.
-				const result = await lm.systemOne(
+				const result = await host.systemOne(
 					parsed.id,
 					{ prompt: clipped },
 					{
@@ -115,7 +124,7 @@ export async function decideTier(input: {
 					return { tier, score: complex, source: "classifier", reason: `local system-one p(complex)=${complex.toFixed(2)}` };
 				}
 			} else {
-				answer = await lm.chat(parsed.id, CLASSIFIER_PROMPT(clipped, config.policy.threshold), { signal });
+				answer = await host.chat(parsed.id, CLASSIFIER_PROMPT(clipped, config.policy.threshold), { signal });
 			}
 		} else {
 			const model = ctx.modelRegistry.findOfType("classifier", parsed.provider, parsed.id);

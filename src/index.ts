@@ -16,8 +16,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { appendFileSync } from "node:fs";
 
 import { loadConfig } from "./config.ts";
+import { createHost } from "./host.ts";
 import { LocalGovernor } from "./governor.ts";
-import { LmStudioClient } from "./lmstudio.ts";
 import { registerRouterCommand } from "./commands.ts";
 import { registerVirtualModels, type RouterRuntime } from "./virtual-models.ts";
 import type { Tier } from "./types.ts";
@@ -32,12 +32,12 @@ export default function modelRouter(pi: ExtensionAPI): void {
 	const debugPath = process.env.PI_MODEL_ROUTER_DEBUG;
 	const log = debugPath ? (message: string) => appendFileSync(debugPath, message + "\n") : undefined;
 	log?.(`factory cwd=${process.cwd()} autoSelect=${loaded.config.autoSelect} local=${loaded.config.catalog.local.join(",")} cloud=${loaded.config.catalog.cloud.join(",")} sources=${loaded.sources.join("|")} warnings=${loaded.warnings.join(";")}`);
-	const lm = new LmStudioClient(loaded.config.lmstudio);
-	const governor = new LocalGovernor(loaded.config.local, lm);
+	const host = createHost(loaded.config);
+	const governor = new LocalGovernor(loaded.config.local, host);
 
 	const rt: RouterRuntime = {
 		config: loaded.config,
-		lm,
+		host,
 		governor,
 		pins: new Map(),
 		sizes: new Map(),
@@ -49,11 +49,11 @@ export default function modelRouter(pi: ExtensionAPI): void {
 		},
 		refreshSizes: async () => {
 			try {
-				for (const model of await lm.list()) {
+				for (const model of await host.list()) {
 					if (typeof model.size_bytes === "number") rt.sizes.set(model.key, model.size_bytes);
 				}
 			} catch {
-				/* LM Studio offline; fast-local falls back to config order */
+				/* host offline; fast-local falls back to config order */
 			}
 		},
 	};

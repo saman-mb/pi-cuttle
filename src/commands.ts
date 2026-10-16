@@ -7,9 +7,9 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 import { saveUserConfig, type LoadedConfig } from "./config.ts";
-import { splitRef } from "./classifier.ts";
+import { isLocalProvider, splitRef } from "./classifier.ts";
 import type { RouterRuntime } from "./virtual-models.ts";
-import type { PolicyMode, Tier } from "./types.ts";
+import type { PolicyMode, RouterConfig, Tier } from "./types.ts";
 
 function refresh(rt: RouterRuntime, patch: Record<string, unknown>): string {
 	const path = saveUserConfig(patch);
@@ -31,8 +31,8 @@ async function editModels(rt: RouterRuntime, ctx: ExtensionCommandContext): Prom
 		candidates = [...rt.config.catalog.cloud];
 	} else {
 		try {
-			const models = await rt.lm.list();
-			candidates = models.filter((m) => m.key && m.type !== "embeddings").map((m) => `lmstudio/${m.key}`);
+			const models = await rt.host.list();
+			candidates = models.filter((m) => m.key && m.type !== "embeddings").map((m) => `${rt.config.host}/${m.key}`);
 		} catch {
 			candidates = [];
 		}
@@ -73,10 +73,27 @@ async function editLocalLimit(rt: RouterRuntime, ctx: ExtensionCommandContext): 
 	ctx.ui.notify(`router: maxConcurrent -> ${Math.floor(value)}\nwritten to ${path}`, "info");
 }
 
+/** Probe the configured host by hitting its inventory endpoint. */
+async function probeHost(rt: import("./virtual-models.ts").RouterRuntime): Promise<boolean> {
+	try {
+		if (rt.host.capabilities.canListLoaded) await rt.host.loaded();
+		else await rt.host.list();
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function baseUrlOf(config: RouterConfig): string {
+	if (config.host === "ollama") return config.ollama.baseUrl;
+	if (config.host === "openai") return config.openai.baseUrl;
+	return config.lmstudio.baseUrl;
+}
+
 async function doctor(rt: RouterRuntime, ctx: ExtensionCommandContext): Promise<void> {
 	const lines: string[] = [];
-	const up = await rt.lm.healthy();
-	lines.push(`LM Studio: ${up ? "reachable" : "UNREACHABLE"} (${rt.config.lmstudio.baseUrl})`);
+	const up = await probeHost(rt);
+	lines.push(`${rt.config.host}: ${up ? "reachable" : "UNREACHABLE"} (${baseUrlOf(rt.config)})`);
 
 	const ref = rt.config.classifier.model;
 	if (!ref) {
@@ -85,22 +102,22 @@ async function doctor(rt: RouterRuntime, ctx: ExtensionCommandContext): Promise<
 		const parsed = splitRef(ref);
 		if (!parsed) {
 			lines.push(`classifier: FAIL invalid ref '${ref}'`);
-		} else if (parsed.provider === "lmstudio") {
-			const type = await rt.lm.modelType(parsed.id);
+		} else if (isLocalProvider(parsed.provider)) {
+			const type = rt.host.capabilities.hasDecisionModels ? ((await rt.host.modelType?.(parsed.id)) ?? undefined) : undefined;
 			if (!type) {
-				lines.push(`classifier: FAIL '${parsed.id}' is not in the LM Studio catalog`);
+				lines.push(`classifier: FAIL '${parsed.id}' is not in the ${rt.config.host} catalog`);
 			} else {
 				const start = Date.now();
 				try {
-					if (type === "decision") {
-						const result = await rt.lm.systemOne(
+					if (type === "decision" && rt.host.systemOne) {
+						const result = await rt.host.systemOne!(
 							parsed.id,
 							{ prompt: "doctor probe" },
 							{ complexity: { type: "choice", instructions: "Trivial probe.", criteria: { standard: "the probe", complex: "the probe" } } },
 						);
 						if (!result.answers.complexity) throw new Error("no answer returned");
 					} else {
-						await rt.lm.chat(parsed.id, "Reply with one word.", { maxTokens: 4 });
+						await rt.host.chat(parsed.id, "Reply with one word.", { maxTokens: 4 });
 					}
 					lines.push(`classifier: PASS ${parsed.id} (${type}) ${Date.now() - start}ms`);
 				} catch (error) {
@@ -116,8 +133,11 @@ async function doctor(rt: RouterRuntime, ctx: ExtensionCommandContext): Promise<
 
 	const gov = await rt.governor.status();
 	lines.push(`slots: ${gov.slots.length}/${gov.localMax} used; loaded: ${gov.loadedModels.map((m) => m.key).join(", ") || "(none)"}`);
+	lines.push(
+		`host: ${rt.config.host} (listLoaded=${gov.capabilities.canListLoaded} loadUnload=${gov.capabilities.canLoadUnload} decision=${gov.capabilities.hasDecisionModels} sizes=${gov.capabilities.hasModelSizes})`,
+	);
 	lines.push(`slotDir: ${rt.config.local.slotDir}`);
-	if (ref?.startsWith("lmstudio/") && rt.config.local.maxLoadedModels > 0 && rt.config.local.maxLoadedModels < 2) {
+	if (ref && isLocalProvider(splitRef(ref)?.provider ?? "") && rt.config.local.maxLoadedModels > 0 && rt.config.local.maxLoadedModels < 2) {
 		lines.push("warning: a local classifier plus maxLoadedModels < 2 can evict the target; set maxLoadedModels >= 2");
 	}
 	ctx.ui.notify(lines.join("\n"), "info");

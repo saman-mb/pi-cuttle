@@ -6,7 +6,7 @@ import type { Message } from "@earendil-works/pi-ai";
 
 import { DEFAULTS } from "../src/config.ts";
 import type { LocalGovernor } from "../src/governor.ts";
-import type { LmStudioClient } from "../src/lmstudio.ts";
+import type { LocalHost } from "../src/host.ts";
 import type { RouterConfig } from "../src/types.ts";
 import { looksLikeLocalFailure, routeRequest, type RouterRuntime } from "../src/virtual-models.ts";
 
@@ -38,7 +38,7 @@ function runtime(cfg: RouterConfig, grant = true): { rt: RouterRuntime; acquired
 		},
 		enforceLoadedCeiling: async () => [],
 	} as unknown as LocalGovernor;
-	const rt: RouterRuntime = { config: cfg, lm: {} as LmStudioClient, governor, pins: new Map(), sizes: new Map() };
+	const rt: RouterRuntime = { config: cfg, host: {} as LocalHost, governor, pins: new Map(), sizes: new Map() };
 	return { rt, acquired };
 }
 

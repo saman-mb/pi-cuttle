@@ -14,7 +14,7 @@ import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
-import type { LmStudioClient } from "./lmstudio.ts";
+import type { LocalHost } from "./host.ts";
 import type { GovernorStatus, LocalConfig, Reservation } from "./types.ts";
 
 function pidAlive(pid: number): boolean {
@@ -48,11 +48,11 @@ export class LocalGovernor {
 	/** Reservations this process holds, grouped by model. */
 	private readonly held = new Map<string, Reservation[]>();
 	private readonly cfg: LocalConfig;
-	private readonly lm: LmStudioClient;
+	private readonly host: LocalHost;
 
-	constructor(cfg: LocalConfig, lm: LmStudioClient) {
+	constructor(cfg: LocalConfig, host: LocalHost) {
 		this.cfg = cfg;
-		this.lm = lm;
+		this.host = host;
 		try {
 			mkdirSync(cfg.slotDir, { recursive: true });
 		} catch {
@@ -120,10 +120,11 @@ export class LocalGovernor {
 	}
 
 	private async loadedKeys(): Promise<Set<string>> {
+		if (!this.host.capabilities.canListLoaded) return new Set();
 		try {
-			return new Set((await this.lm.loaded()).map((m) => m.key));
+			return new Set((await this.host.loaded()).map((m) => m.key));
 		} catch {
-			// LM Studio unreachable: fall back to slot accounting alone.
+			// Host unreachable: fall back to slot accounting alone.
 			return new Set();
 		}
 	}
@@ -176,11 +177,11 @@ export class LocalGovernor {
 	async status(): Promise<GovernorStatus> {
 		let loadedModels: GovernorStatus["loadedModels"] = [];
 		try {
-			loadedModels = await this.lm.loaded();
+			loadedModels = this.host.capabilities.canListLoaded ? await this.host.loaded() : [];
 		} catch {
 			/* offline is a valid status */
 		}
-		return { slots: this.live(), localMax: this.cfg.maxConcurrent, loadedModels };
+		return { slots: this.live(), localMax: this.cfg.maxConcurrent, loadedModels, capabilities: this.host.capabilities };
 	}
 
 	/**
@@ -189,9 +190,10 @@ export class LocalGovernor {
 	 */
 	async enforceLoadedCeiling(keepKey?: string): Promise<string[]> {
 		if (this.cfg.maxLoadedModels <= 0) return [];
+		if (!this.host.capabilities.canLoadUnload) return [];
 		let loaded: { key: string; instances: { id: string; remaining_ttl_seconds?: number }[] }[];
 		try {
-			loaded = await this.lm.loaded();
+			loaded = await this.host.loaded();
 		} catch {
 			return [];
 		}
@@ -210,7 +212,7 @@ export class LocalGovernor {
 			if (remaining <= allowedOthers) break;
 			for (const instance of victim.instances) {
 				try {
-					await this.lm.unload(instance.id);
+					await this.host.unload(instance.id);
 				} catch {
 					/* keep going; a failed unload is caught by the acquire() ceiling check */
 				}

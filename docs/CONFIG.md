@@ -9,13 +9,35 @@ Merge is per top-level section: a project file that sets only `local` leaves the
 user's `classifier`, `catalog`, and `policy` intact. Missing file means defaults.
 Worked example: [`examples/model-router.example.json`](../examples/model-router.example.json).
 
+## `host`
+
+Which local-inference server serves `catalog.local` and a local `classifier.model`.
+
+The router talks to the *native management API* of the host, not just its
+OpenAI-compatible endpoint, because the memory governor needs to know what is
+loaded and to evict under a ceiling. Hosts differ in what they expose, and the
+router degrades explicitly per capability instead of assuming:
+
+| Host | `host` | Inventory | Loaded list | Load/unload | Model sizes | Decision models |
+|---|---|---|---|---|---|---|
+| LM Studio | `lmstudio` | ✅ | ✅ | ✅ | ✅ | ✅ System One |
+| ollama | `ollama` | ✅ | ✅ `/api/ps` | ✅ `keep_alive` | ✅ | ✖ (chat prompt instead) |
+| llama.cpp, vLLM, other OpenAI-compatible | `openai` | ✅ | ✖ | ✖ | ✖ | ✖ |
+
+On a host without loaded-model introspection the governor still caps concurrency
+cross-process via slot files (the invariant that matters); it simply cannot
+cooperate with the host's own memory policy. `maxLoadedModels` and
+`router/fast-local` size ordering apply only where the host supports them.
+
+See the per-host sections below for URLs and tokens.
+
 ## `classifier`
 
 The decision model. May be local or cloud.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `model` | string | unset | `provider/model`. A `lmstudio/...` ref is called over local HTTP; anything else is resolved as a pi classifier via `ctx.modelRegistry`. |
+| `model` | string | unset | `provider/model`. A ref whose provider is a local host (`lmstudio/…`, `ollama/…`, `openai/…`) is called over local HTTP for free; anything else is resolved as a pi classifier via `ctx.modelRegistry`. |
 | `fallback` | `"heuristic"` \| `"local"` \| `"cloud"` | `"heuristic"` | What to use when the classifier is unavailable or times out. |
 | `timeoutMs` | number | `4000` | Classifier timeout before falling back. |
 | `stateChars` | number | `16000` | Characters of the prompt handed to the classifier. |
@@ -24,8 +46,8 @@ Example: `{ "model": "lmstudio/openjev-2b", "fallback": "heuristic" }`.
 
 ## `catalog`
 
-Ordered candidate lists. The first entry is used; ordering by size for
-`router/fast-local` is a backlog item.
+Ordered candidate lists. The first entry is used; `router/fast-local` orders local
+candidates by on-disk size when the host reports it (LM Studio, ollama).
 
 | Field | Type | Default |
 |---|---|---|
@@ -52,26 +74,38 @@ Memory governance. See [ARCHITECTURE.md](ARCHITECTURE.md) for why this is filesy
 |---|---|---|---|
 | `maxConcurrent` | number | `1` | Max concurrent local requests across all pi processes. |
 | `maxConcurrentPerModel` | number | `1` | Max concurrent requests per local model. |
-| `maxLoadedModels` | number | `1` | Cooperative ceiling on models loaded in LM Studio. |
+| `maxLoadedModels` | number | `1` | Cooperative ceiling on models loaded in the host (where the host reports loaded state and supports unload). |
 | `onFull` | `"spill"` \| `"wait"` | `"spill"` | Route to cloud immediately, or wait for a slot. |
 | `waitMs` | number | `20000` | Wait budget before spilling when `onFull: "wait"`. |
 | `idleUnloadMs` | number | `300000` | Reserved; LM Studio owns the TTL (see #27). |
 | `slotDir` | string | `~/.pi/agent/model-router/slots` | Where slot files live. `~` expands. |
 | `staleSlotMs` | number | `300000` | A slot older than this is reaped. |
 
-**Local classifier:** if `classifier.model` is an `lmstudio/…` model, set `maxLoadedModels`
-to **at least 2**. At `1` the classifier and the target model evict each other every turn —
-the classifier is unloaded to make room for the target, then reloaded for the next decision.
-When the ceiling is reached and the target is not loaded, the governor unloads other models
-(all instances of them) to free a slot; `/router doctor` warns when this is misconfigured.
+**Local classifier:** if `classifier.model` is served by the local host, set
+`maxLoadedModels` to **at least 2**. At `1` the classifier and the target model
+evict each other every turn — the classifier is unloaded to make room for the
+target, then reloaded for the next decision. When the ceiling is reached and the
+target is not loaded, the governor unloads other models (all instances of them) to
+free a slot; `/router doctor` warns when this is misconfigured. This applies to
+hosts that report loaded state (LM Studio, ollama).
 
-## `lmstudio`
+## `lmstudio`, `ollama`, `openai`
 
-| Field | Type | Default | Meaning |
-|---|---|---|---|
-| `baseUrl` | string | `http://localhost:1235` | LM Studio server. |
-| `apiToken` | string | unset | Bearer token if the server enables tokens. |
-| `timeoutMs` | number | `8000` | HTTP timeout. |
+Connection settings per host; only the one named by `host` is used.
+
+| Section | Field | Default |
+|---|---|---|
+| `lmstudio` | `baseUrl` | `http://localhost:1235` |
+| | `apiToken` | unset |
+| `ollama` | `baseUrl` | `http://localhost:11434` |
+| `openai` | `baseUrl` | `http://localhost:8080` (llama.cpp default) |
+| | `apiKey` | unset |
+
+Every section also accepts `timeoutMs` (default `8000`).
+
+```json
+{ "host": "ollama", "catalog": { "local": ["ollama/qwen3:8b"] } }
+```
 
 ## Precedence summary
 

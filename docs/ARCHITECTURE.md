@@ -29,14 +29,15 @@ or the `pi-subagents` package.
 | `message_end` delivers the authoritative `AssistantMessage` with `provider`, `model`, `stopReason`, `errorMessage`, `usage` | `docs/extensions.md:106`; `@earendil-works/pi-ai dist/types.d.ts:357` |
 | `ctx.sessionManager.getSessionId()` | `dist/core/session-manager.d.ts:178` |
 | LM Studio `GET /api/v1/models` exposes `loaded_instances[].id` (+ `config.parallel`, `remaining_ttl_seconds`); `POST /api/v1/models/unload` takes `instance_id` | live probe of LM Studio on `:1235` |
+| ollama `GET /api/tags` / `GET /api/ps` / `POST /api/generate {keep_alive}` / `POST /api/chat` | documented ollama API; adapter unit-tested with a fake client (no live install on the build machine) |
 
 ## Invariants
 
 1. **Decide once per session (default), not per request.** Continuations, retries,
    and tool-result follow-ups keep the previous model, preserving the prompt cache.
    `policy.reclassify: "turn"` opts into per-turn re-classification.
-2. **`route()` is self-contained.** It may call `ctx.modelRegistry`, LM Studio over
-   HTTP, and the filesystem. It may not rely on another extension's hooks: a
+2. **`route()` is self-contained.** It may call `ctx.modelRegistry`, the configured
+   local host over HTTP, and the filesystem. It may not rely on another extension's hooks: a
    foreground subagent child shares the parent process but does not reload ambient
    extensions.
 3. **The memory cap is on disk.** Async children run in separate processes; an
@@ -44,17 +45,26 @@ or the `pi-subagents` package.
    slot files under `local.slotDir`.
 4. **Release is approximate.** Slots are freed on `message_end`, on process exit,
    and by stale reaping on every acquire. Correctness rests on reaping.
-5. **The heuristic never throws.** When LM Studio or the classifier is unavailable,
+5. **The heuristic never throws.** When the local host or the classifier is unavailable,
    `decideTier` returns a deterministic answer.
+6. **Hosts are pluggable; capabilities are explicit.** All local-inference calls go through
+   `LocalHost` (`src/host.ts`). Each host declares `canListLoaded`, `canLoadUnload`,
+   `hasDecisionModels`, `hasModelSizes`; the governor and classifier degrade per flag
+   rather than assuming LM Studio. A host with no loaded-model introspection still gets
+   cross-process slot accounting — the cap that prevents fanout OOMs — but no ceiling
+   enforcement.
 
 ## Components
 
 | File | Responsibility |
 |---|---|
 | `src/config.ts` | Load and merge `model-router.json` over defaults. |
-| `src/lmstudio.ts` | LM Studio REST client (list, loaded, load, unload, chat). |
-| `src/governor.ts` | Cross-process slot broker + LM Studio loaded-model cooperation. |
-| `src/classifier.ts` | `decideTier`: classifier call (pi or LM Studio) with heuristic fallback. |
+| `src/host.ts` | `LocalHost` interface + capabilities; `createHost` picks by `config.host`. |
+| `src/lmstudio.ts` | LM Studio adapter (native `/api/v1` management API, System One decisions). |
+| `src/ollama.ts` | ollama adapter (`/api/tags`, `/api/ps`, `keep_alive` load/unload). |
+| `src/openai-host.ts` | Generic OpenAI-compatible adapter (capability floor). |
+| `src/governor.ts` | Cross-process slot broker + loaded-model cooperation (capability-gated). |
+| `src/classifier.ts` | `decideTier`: classifier call via the local host or pi, with heuristic fallback. |
 | `src/virtual-models.ts` | Register `router/auto`, `router/local`, `router/cloud`, `router/fast-local`; `route()` policy + spill. |
 | `src/commands.ts` | `/router` command. |
 | `src/index.ts` | Extension factory; wires the above; `message_end` release hook. |

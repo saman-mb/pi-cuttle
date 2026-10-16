@@ -20,12 +20,12 @@ import type { ExtensionAPI, ExtensionContext, ModelRoute, ModelRouteRequest } fr
 
 import { applyPolicy, decideTier, splitRef } from "./classifier.ts";
 import type { LocalGovernor } from "./governor.ts";
-import type { LmStudioClient } from "./lmstudio.ts";
+import type { LocalHost } from "./host.ts";
 import type { RouterConfig, RouterFlavor, RouterState, Tier } from "./types.ts";
 
 export interface RouterRuntime {
 	config: RouterConfig;
-	lm: LmStudioClient;
+	host: LocalHost;
 	governor: LocalGovernor;
 	/** Session-scoped pins set by `/router local|cloud|auto`. */
 	pins: Map<string, Tier>;
@@ -35,7 +35,7 @@ export interface RouterRuntime {
 	sizes: Map<string, number>;
 	/** Optional debug logger (set from `PI_MODEL_ROUTER_DEBUG`). */
 	log?: (message: string) => void;
-	/** Refresh `sizes` from LM Studio; best-effort. */
+	/** Refresh `sizes` from the local host; best-effort. */
 	refreshSizes?: () => Promise<void>;
 }
 
@@ -150,7 +150,7 @@ export async function routeRequest(
 
 	const prompt = lastUserText(request.messages);
 	const forced = rt.getForced?.() ?? rt.pins.get(sessionId) ?? flavorBias(flavor);
-	const decided = await decideTier({ config: rt.config, prompt, ctx, lm: rt.lm, ...(forced ? { forced } : {}) });
+	const decided = await decideTier({ config: rt.config, prompt, ctx, host: rt.host, ...(forced ? { forced } : {}) });
 	const decision = applyPolicy(rt.config, decided, phase);
 
 	let tier: Tier = decision.tier;

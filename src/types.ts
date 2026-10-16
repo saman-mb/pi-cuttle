@@ -1,3 +1,7 @@
+import type { HostCapabilities } from "./host.ts";
+
+export type { HostCapabilities } from "./host.ts";
+
 /**
  * Shared types for pi-model-router.
  *
@@ -10,6 +14,9 @@ export type Tier = "local" | "cloud";
 
 /** Which of the registered virtual models is being selected. */
 export type RouterFlavor = "auto" | "local" | "cloud" | "fast-local";
+
+/** Which local-inference host serves local models. */
+export type HostKind = "lmstudio" | "ollama" | "openai";
 
 export interface ClassifierConfig {
 	/** `provider/model` of the decision model. Local or cloud; both are valid. */
@@ -67,14 +74,28 @@ export interface LmStudioConfig {
 	timeoutMs: number;
 }
 
+export interface OllamaConfig {
+	baseUrl: string;
+	timeoutMs: number;
+}
+
+export interface OpenAiConfig {
+	baseUrl: string;
+	apiKey?: string;
+	timeoutMs: number;
+}
+
 export interface RouterConfig {
-	/** Select `router/auto` automatically when a session starts (unless `--model` was passed). */
+	/** Which local host serves local models (and the local classifier). */
+	host: HostKind;
 	autoSelect: boolean;
 	classifier: ClassifierConfig;
 	catalog: CatalogConfig;
 	policy: PolicyConfig;
 	local: LocalConfig;
 	lmstudio: LmStudioConfig;
+	ollama: OllamaConfig;
+	openai: OpenAiConfig;
 }
 
 /** Router state persisted on the session branch by pi. Must be JSON-serializable. */
@@ -129,4 +150,6 @@ export interface GovernorStatus {
 	slots: Reservation[];
 	localMax: number;
 	loadedModels: { key: string; instances: LoadedInstance[] }[];
+	/** What the configured host can do; degraded hosts report fewer capabilities. */
+	capabilities: HostCapabilities;
 }
