@@ -61,6 +61,29 @@ export function pickCloud(config: RouterConfig): string | undefined {
 	return config.catalog.cloud[0];
 }
 
+/** Ordered local candidates; `fast-local` sorts by on-disk size when known (#19). */
+export function localCandidates(config: RouterConfig, flavor?: RouterFlavor, sizes?: Map<string, number>): string[] {
+	const list = [...config.catalog.local];
+	if (flavor === "fast-local" && sizes && sizes.size > 0) {
+		list.sort((a, b) => (sizes.get(a) ?? Number.POSITIVE_INFINITY) - (sizes.get(b) ?? Number.POSITIVE_INFINITY));
+	}
+	return list;
+}
+
+export function cloudCandidates(config: RouterConfig): string[] {
+	return [...config.catalog.cloud];
+}
+
+/** First ref in `candidates` that the model registry can actually resolve (#45). */
+export function firstResolvable(ctx: ExtensionContext, candidates: readonly string[]): string | undefined {
+	for (const ref of candidates) {
+		const parsed = splitRef(ref);
+		if (!parsed) continue;
+		if (ctx.modelRegistry.find(parsed.provider, parsed.id)) return ref;
+	}
+	return undefined;
+}
+
 function flavorBias(flavor: RouterFlavor): Tier | undefined {
 	if (flavor === "local" || flavor === "fast-local") return "local";
 	if (flavor === "cloud") return "cloud";
@@ -96,27 +119,31 @@ async function ensureLocalSlot(
 	ctx: ExtensionContext,
 	flavor: RouterFlavor,
 	sessionId: string,
-): Promise<{ spill?: string; reservation?: Reservation }> {
-	const modelKey = pickLocal(rt.config, flavor, rt.sizes);
-	if (!modelKey) return { spill: "no local model configured" };
-	if (!fitsLocalWindow(rt, ctx, flavor)) return { spill: "context exceeds local window" };
-	// Hosts report loaded state and assistant messages by bare model id, with no provider
-	// prefix. Key the slot by that same id so acquire/release and the ceiling all agree.
-	const bareKey = splitRef(modelKey)?.id ?? modelKey;
-	if (rt.config.local.maxLoadedModels > 0) await rt.governor.enforceLoadedCeiling(bareKey);
-	const reservation = await rt.governor.acquire(bareKey, { sessionId, flavor });
-	if (!reservation) return { spill: "local full, spilled to cloud" };
-	return { reservation };
+): Promise<{ spill?: string; reservation?: Reservation; ref?: string }> {
+	const candidates = localCandidates(rt.config, flavor, rt.sizes);
+	if (candidates.length === 0) return { spill: "no local model configured" };
+	let sawContextOverflow = false;
+	for (const ref of candidates) {
+		const parsed = splitRef(ref);
+		if (!parsed) continue;
+		const model = ctx.modelRegistry.find(parsed.provider, parsed.id);
+		if (!model) continue; // #45: try the next candidate instead of throwing
+		if (!fitsWindow(ctx, model.contextWindow ?? 0)) {
+			sawContextOverflow = true;
+			continue;
+		}
+		// Hosts report loaded state and assistant messages by bare model id, with no provider
+		// prefix. Key the slot by that same id so acquire/release and the ceiling all agree.
+		const bareKey = parsed.id;
+		if (rt.config.local.maxLoadedModels > 0) await rt.governor.enforceLoadedCeiling(bareKey);
+		const reservation = await rt.governor.acquire(bareKey, { sessionId, flavor });
+		if (reservation) return { reservation, ref };
+	}
+	return { spill: sawContextOverflow ? "context exceeds local window" : "local full, spilled to cloud" };
 }
 
-/** Can the whole conversation fit the local model's window? (#15) */
-function fitsLocalWindow(rt: RouterRuntime, ctx: ExtensionContext, flavor: RouterFlavor): boolean {
-	const localRef = pickLocal(rt.config, flavor, rt.sizes);
-	if (!localRef) return false;
-	const parsed = splitRef(localRef);
-	if (!parsed) return false;
-	const model = ctx.modelRegistry.find(parsed.provider, parsed.id);
-	const window = model?.contextWindow ?? 0;
+/** Can the whole conversation fit a model's window? (#15) */
+function fitsWindow(ctx: ExtensionContext, window: number): boolean {
 	if (window <= 0) return true;
 	const usage = ctx.getContextUsage();
 	if (!usage || usage.tokens === null) return true;
@@ -146,7 +173,7 @@ export async function routeRequest(
 	// #11: a retry may switch models. Local failures and overflow-style errors go to cloud.
 	if (request.reason === "retry" && request.failed) {
 		const failed = request.failed;
-		const cloudRef = pickCloud(rt.config);
+		const cloudRef = firstResolvable(ctx, cloudCandidates(rt.config));
 		if (cloudRef && looksLikeLocalFailure(failed.model.provider, failed.message.errorMessage)) {
 			// The failed local attempt holds a slot in this process; free it as we escalate.
 			rt.governor.releaseOne(failed.model.id);
@@ -188,7 +215,7 @@ export async function routeRequest(
 	if (state && !reclassify) {
 		// #41: a local session that is visibly flailing escalates to cloud mid-turn.
 		if (escalateCfg?.enabled && state.tier === "local" && signals.errors >= escalateCfg.toolErrors) {
-			const cloudRef = pickCloud(rt.config);
+			const cloudRef = firstResolvable(ctx, cloudCandidates(rt.config));
 			if (cloudRef) {
 				rt.governor.releaseOne(splitRef(pickLocal(rt.config, flavor, rt.sizes) ?? "")?.id ?? "");
 				rt.log?.(`route escalate local->cloud errors=${signals.errors} window=${escalateCfg.window}`);
@@ -212,12 +239,7 @@ export async function routeRequest(
 			const nextClean = signals.errors === 0 ? cleanStreak : 0;
 			if (nextClean !== (state.cleanTurns ?? 0)) {
 				const next: RouterState = { ...state, cleanTurns: nextClean };
-				const cloudRef = pickCloud(rt.config);
-				return resolveModel(ctx, cloudRef, thinking, next);
-			}
-			if (signals.errors > 0 && (state.cleanTurns ?? 0) !== 0) {
-				const next: RouterState = { ...state, cleanTurns: 0 };
-				return resolveModel(ctx, pickCloud(rt.config), thinking, next);
+				return resolveModel(ctx, firstResolvable(ctx, cloudCandidates(rt.config)), thinking, next);
 			}
 		}
 
@@ -235,12 +257,16 @@ export async function routeRequest(
 				let tier = flipped.tier;
 				const reason = `${flipped.reason}; phase -> ${detected}`;
 				let held: Reservation | undefined;
+				let flippedRef: string | undefined;
 				if (tier === "local" && state.tier !== "local") {
 					const reserved = await ensureLocalSlot(rt, ctx, flavor, sessionId);
 					if (reserved.spill) tier = "cloud";
-					else held = reserved.reservation;
+					else {
+						held = reserved.reservation;
+						flippedRef = reserved.ref;
+					}
 				}
-				const ref = tier === "local" ? pickLocal(rt.config, flavor, rt.sizes) : pickCloud(rt.config);
+				const ref = tier === "local" ? (flippedRef ?? firstResolvable(ctx, localCandidates(rt.config, flavor, rt.sizes))) : firstResolvable(ctx, cloudCandidates(rt.config));
 				rt.log?.(`route phase-flip ${state.phase} -> ${detected} tier=${tier} ref=${ref}`);
 				const next: RouterState = {
 					tier,
@@ -256,7 +282,10 @@ export async function routeRequest(
 				}
 			}
 		}
-		const ref = state.tier === "local" ? pickLocal(rt.config, flavor, rt.sizes) : pickCloud(rt.config);
+		const ref =
+			state.tier === "local"
+				? firstResolvable(ctx, localCandidates(rt.config, flavor, rt.sizes))
+				: firstResolvable(ctx, cloudCandidates(rt.config));
 		return resolveModel(ctx, ref, thinking, state);
 	}
 
@@ -268,8 +297,9 @@ export async function routeRequest(
 	let tier: Tier = decision.tier;
 	const reasons: string[] = [decision.reason];
 
-	// Local side: reserve a slot or spill to cloud.
+	// Local side: reserve a slot or spill to cloud (#45: the first workable candidate).
 	let held: Reservation | undefined;
+	let localRef: string | undefined;
 	if (tier === "local") {
 		const reserved = await ensureLocalSlot(rt, ctx, flavor, sessionId);
 		if (reserved.spill) {
@@ -277,10 +307,27 @@ export async function routeRequest(
 			reasons.push(reserved.spill);
 		} else {
 			held = reserved.reservation;
+			localRef = reserved.ref;
 		}
 	}
 
-	const ref = tier === "local" ? pickLocal(rt.config, flavor, rt.sizes) : pickCloud(rt.config);
+	let ref: string | undefined;
+	if (tier === "local") {
+		ref = localRef;
+	} else {
+		ref = firstResolvable(ctx, cloudCandidates(rt.config));
+		if (!ref) {
+			// #45: a broken cloud catalog must not break the turn; fall back to local.
+			const fallback = await ensureLocalSlot(rt, ctx, flavor, sessionId);
+			if (fallback.ref) {
+				tier = "local";
+				ref = fallback.ref;
+				held = fallback.reservation;
+				reasons.push("no cloud candidate available, routed local");
+			}
+		}
+	}
+	if (!ref) throw new Error("pi-model-router: no configured model resolves (check catalog.local/cloud)");
 	rt.log?.(`route result tier=${tier} ref=${ref} reasons=${reasons.join("; ")}`);
 	const next: RouterState = {
 		tier,

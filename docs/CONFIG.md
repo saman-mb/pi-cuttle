@@ -46,8 +46,12 @@ Example: `{ "model": "lmstudio/openjev-2b", "fallback": "heuristic" }`.
 
 ## `catalog`
 
-Ordered candidate lists. The first entry is used; `router/fast-local` orders local
-candidates by on-disk size when the host reports it (LM Studio, ollama).
+Ordered candidate lists, tried in order. The first entry is preferred; if it is
+missing from the model registry, over its context window, or out of slots, the next
+resolvable candidate is used before spilling to cloud (#45). When the cloud catalog
+resolves nothing, the turn falls back to a local candidate rather than failing; only
+when nothing at all resolves does routing raise a clear error. `router/fast-local`
+orders local candidates by on-disk size when the host reports it (LM Studio, ollama).
 
 | Field | Type | Default |
 |---|---|---|

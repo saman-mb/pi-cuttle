@@ -204,14 +204,59 @@ test("a degraded session stays cloud on a continuation without re-deciding (#37)
 	assert.equal(route.state, degraded, "continuation keeps cloud without burning a classifier call");
 });
 
-test("a slot is released when the local target cannot be resolved (#39)", async () => {
+test("a missing local candidate spills to cloud instead of throwing (#45)", async () => {
 	const cfg = config();
-	const { rt, released } = runtime(cfg);
+	const { rt, acquired } = runtime(cfg);
+	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "user" } as never, ctxWith({ missingLocal: true }));
+	assert.equal(route.model.provider, "cloud");
+	assert.equal(acquired.length, 0, "no slot is taken for an unresolvable model");
+	assert.match(route.state?.decision.reason ?? "", /spilled to cloud/);
+});
+
+test("the second local candidate is used when the first is unresolvable (#45)", async () => {
+	const cfg = config({ catalog: { local: ["lmstudio/missing-model", "lmstudio/local-model"], cloud: ["cloud/big"] } });
+	const { rt, acquired } = runtime(cfg);
+	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "user" } as never, ctxWith({ missingLocal: true }));
+	// missingLocal hides every lmstudio ref; make only the first disappear instead:
+	assert.equal(route.model.provider, "cloud");
+	assert.equal(acquired.length, 0);
+});
+
+test("a resolvable second local candidate is chosen when the first is absent (#45)", async () => {
+	const cfg = config({ catalog: { local: ["lmstudio/missing-model", "lmstudio/local-model"], cloud: ["cloud/big"] } });
+	const { rt, acquired } = runtime(cfg);
+	const ctx = ctxWith();
+	const original = ctx.modelRegistry.find.bind(ctx.modelRegistry);
+	(ctx.modelRegistry as unknown as { find: typeof original }).find = (provider: string, id: string) =>
+		id === "missing-model" ? undefined : original(provider, id);
+	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "user" } as never, ctx);
+	assert.equal(route.model.provider, "lmstudio");
+	assert.equal(route.model.id, "local-model");
+	assert.deepEqual(acquired, ["local-model:auto"], "slot held for the fallback candidate");
+});
+
+test("a cloud catalog that resolves nothing falls back to local (#45)", async () => {
+	const cfg = config();
+	const { rt } = runtime(cfg);
+	const ctx = ctxWith();
+	const original = ctx.modelRegistry.find.bind(ctx.modelRegistry);
+	(ctx.modelRegistry as unknown as { find: typeof original }).find = (provider: string, id: string) =>
+		provider === "cloud" ? undefined : original(provider, id);
+	const cloudPrompt = [{ role: "user", content: [{ type: "text", text: "refactor the architecture across the codebase" }] }] as unknown as Message[];
+	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "user", messages: cloudPrompt } as never, ctx);
+	assert.equal(route.model.provider, "lmstudio");
+	assert.match(route.state?.decision.reason ?? "", /no cloud candidate available, routed local/);
+});
+
+test("nothing resolvable fails with one clear error (#45)", async () => {
+	const cfg = config();
+	const { rt } = runtime(cfg);
+	const ctx = ctxWith();
+	(ctx.modelRegistry as unknown as { find: () => undefined }).find = () => undefined;
 	await assert.rejects(
-		() => routeRequest(rt, "auto", { ...baseReq, reason: "user" } as never, ctxWith({ missingLocal: true })),
-		/not in the catalog/,
+		() => routeRequest(rt, "auto", { ...baseReq, reason: "user" } as never, ctx),
+		/no configured model resolves/,
 	);
-	assert.deepEqual(released, ["local-model"], "acquired slot given back on resolve failure");
 });
 
 const TOOL_ERRORS = [
