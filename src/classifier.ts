@@ -326,15 +326,23 @@ export async function decideTier(input: {
 		log?.(`classifier: ${classifierError}`);
 	}
 
+	// #53: carry the failure on the decision so the runtime can surface it without the
+	// caller having to parse the reason string.
+	const failure = { ref, message: classifierError ?? "no answer" };
 	if (config.classifier.fallback === "heuristic") {
 		const fallback = heuristicDecision(config, prompt);
-		return { ...fallback, reason: `${fallback.reason} (classifier failed: ${classifierError ?? "no answer"})` };
+		return {
+			...fallback,
+			classifierFailure: failure,
+			reason: `${fallback.reason} (classifier failed: ${failure.message})`,
+		};
 	}
 	return {
 		tier: config.classifier.fallback,
 		score: 0,
 		source: "heuristic",
-		reason: `classifier unavailable (${classifierError ?? "no answer"}), fallback ${config.classifier.fallback}`,
+		classifierFailure: failure,
+		reason: `classifier unavailable (${failure.message}), fallback ${config.classifier.fallback}`,
 	};
 }
 

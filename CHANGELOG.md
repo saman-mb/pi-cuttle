@@ -25,6 +25,14 @@ versions follow [SemVer](https://semver.org/).
 - `PI_MODEL_ROUTER_DEBUG` is now documented. Set it to a file path to log routing decisions and
   any classifier trim or failure; it is the only turn-level record that the classifier fell back.
 
+## [Unreleased]
+
+### Fixed
+
+- `/router status` now prints the most recent classifier failure (turn, model, error
+  text) and omits the line when the last classification succeeded, so a router running
+  on the heuristic fallback no longer looks like it classified successfully (#53).
+
 ## [0.1.0] — 2026-10-16
 
 First tagged release. The router works end to end on LM Studio, with ollama and any

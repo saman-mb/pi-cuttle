@@ -124,7 +124,7 @@ Set `host` to `ollama` or `openai` and the matching section's `baseUrl` (default
 Interactive editing (persists to the user config file):
 
 ```
-/router                 # status: slots, loaded models, config sources
+/router                 # status: slots, loaded models, sources, last classifier failure
 /router init            # first-run wizard: detect hosts, pick models, write config
 /router doctor          # probe LM Studio + the classifier end to end
 /router models          # pick the local, cloud, or decision model

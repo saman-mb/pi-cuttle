@@ -343,3 +343,28 @@ test("an error resets the clean streak and keeps the session on cloud (#41)", as
 	assert.equal(route.state?.tier, "cloud");
 	assert.equal(route.state?.cleanTurns, 0);
 });
+
+test("a failing classifier is recorded on the runtime with its turn (#53)", async () => {
+	const cfg = config({ classifier: { ...DEFAULTS.classifier, model: "lmstudio/decision-x" } });
+	const { rt } = runtime(cfg);
+	// The runtime's empty host fake makes the classifier path throw; the turn must still route.
+	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "user" } as never, ctxWith());
+	assert.ok(route.model, "the turn still routes on the heuristic fallback");
+	assert.equal(rt.lastClassifierError?.ref, "lmstudio/decision-x");
+	assert.equal(rt.lastClassifierError?.turn, 1, "one user message so far");
+	assert.equal(rt.lastClassifierError?.message.length > 0, true);
+});
+
+test("a successful classification clears the recorded failure (#53)", async () => {
+	const cfg = config({ classifier: { ...DEFAULTS.classifier, model: "lmstudio/decision-x" } });
+	const { rt } = runtime(cfg);
+	rt.host = {
+		capabilities: { canListLoaded: true, canLoadUnload: true, hasDecisionModels: true, hasModelSizes: true },
+		modelType: async () => "llm",
+		chat: async () => "LOCAL",
+	} as unknown as LocalHost;
+	rt.lastClassifierError = { ref: "lmstudio/decision-x", message: "stale failure", turn: 0, at: 0 };
+	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "user" } as never, ctxWith());
+	assert.equal(route.state?.decision.source, "classifier");
+	assert.equal(rt.lastClassifierError, undefined, "successful classification clears the failure");
+});

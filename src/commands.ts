@@ -13,7 +13,7 @@ import { DEFAULT_PHYSICAL_BATCH_TOKENS, decisionStateBudget, detectPhysicalBatch
 import type { HostModel } from "./host.ts";
 import { formatStats, type Telemetry } from "./telemetry.ts";
 import type { RouterRuntime } from "./virtual-models.ts";
-import type { PolicyMode, RouterConfig, Tier } from "./types.ts";
+import type { GovernorStatus, PolicyMode, RouterConfig, Tier } from "./types.ts";
 
 function refresh(rt: RouterRuntime, patch: Record<string, unknown>): string {
 	const path = saveUserConfig(patch);
@@ -283,14 +283,26 @@ async function doctor(rt: RouterRuntime, ctx: ExtensionCommandContext): Promise<
 	ctx.ui.notify(lines.join("\n"), "info");
 }
 
-async function status(rt: RouterRuntime, loaded: LoadedConfig, ctx: ExtensionCommandContext): Promise<void> {
-	const governor = await rt.governor.status();
-	const pinned = rt.pins.get(ctx.sessionManager.getSessionId());
+/** Collapse a possibly multi-line error into one status line (#53). */
+export function oneLine(text: string, max = 160): string {
+	const flat = text.replace(/\s+/g, " ").trim();
+	return flat.length > max ? flat.slice(0, max - 1) + "\u2026" : flat;
+}
+
+/** Pure status rendering; pinned by tests so the failure line cannot drift (#53). */
+export function buildStatusLines(input: {
+	rt: RouterRuntime;
+	loaded: LoadedConfig;
+	pinned?: Tier;
+	effectiveChars: number;
+	governor: GovernorStatus;
+}): string[] {
+	const { rt, loaded, pinned, effectiveChars, governor } = input;
 	const lines = [
 		`models:   local=${rt.config.catalog.local.join(", ") || "(none)"}`,
 		`          cloud=${rt.config.catalog.cloud.join(", ") || "(none)"}`,
 		`decision: ${rt.config.classifier.model ?? "heuristic only"} (fallback ${rt.config.classifier.fallback})`,
-		`stateChars: ${await effectiveStateChars(rt)} (configured ${rt.config.classifier.stateChars})`,
+		`stateChars: ${effectiveChars} (configured ${rt.config.classifier.stateChars})`,
 		`policy:   ${rt.config.policy.mode} (threshold ${rt.config.policy.threshold}, reclassify ${rt.config.policy.reclassify})`,
 		`autoselect: ${rt.config.autoSelect}`,
 		`pin:      ${pinned ?? "auto"}`,
@@ -299,7 +311,20 @@ async function status(rt: RouterRuntime, loaded: LoadedConfig, ctx: ExtensionCom
 		`pinned:   ${governor.pinnedKeys.join(", ") || "(none)"}`,
 		`config:   ${loaded.sources.join(" -> ") || "(defaults only)"}`,
 	];
+	// #53: only present when a classification actually failed — never when it succeeded,
+	// so its presence is a signal rather than noise.
+	if (rt.lastClassifierError) {
+		const failure = rt.lastClassifierError;
+		lines.push(`failure:  turn ${failure.turn} ${failure.ref} \u2014 ${oneLine(failure.message)}`);
+	}
 	for (const warning of loaded.warnings) lines.push(`warning:  ${warning}`);
+	return lines;
+}
+
+async function status(rt: RouterRuntime, loaded: LoadedConfig, ctx: ExtensionCommandContext): Promise<void> {
+	const governor = await rt.governor.status();
+	const pinned = rt.pins.get(ctx.sessionManager.getSessionId());
+	const lines = buildStatusLines({ rt, loaded, pinned, effectiveChars: await effectiveStateChars(rt), governor });
 	ctx.ui.notify(lines.join("\n"), "info");
 }
 

@@ -21,7 +21,7 @@ import type { ExtensionAPI, ExtensionContext, ModelRoute, ModelRouteRequest } fr
 import { applyPolicy, decideTier, detectPhase, splitRef, struggleSignals } from "./classifier.ts";
 import type { LocalGovernor } from "./governor.ts";
 import type { LocalHost } from "./host.ts";
-import type { Reservation, RouterConfig, RouterFlavor, RouterState, Tier } from "./types.ts";
+import type { ClassifierFailure, Reservation, RouterConfig, RouterFlavor, RouterState, Tier } from "./types.ts";
 
 export interface RouterRuntime {
 	config: RouterConfig;
@@ -35,11 +35,18 @@ export interface RouterRuntime {
 	sizes: Map<string, number>;
 	/** Optional debug logger (set from `PI_MODEL_ROUTER_DEBUG`). */
 	log?: (message: string) => void;
+	/** Most recent classifier failure, for `/router status` (#53). */
+	lastClassifierError?: ClassifierFailure;
 	/** Refresh `sizes` from the local host; best-effort. */
 	refreshSizes?: () => Promise<void>;
 }
 
 type RouterRequest = ModelRouteRequest<RouterState>;
+
+/** 1-based index of the user turn a request belongs to (count of user messages). */
+export function userTurn(messages: readonly Message[]): number {
+	return messages.filter((message) => message.role === "user").length;
+}
 
 /** Extract the latest user text from the conversation. */
 export function lastUserText(messages: readonly Message[]): string {
@@ -292,6 +299,13 @@ export async function routeRequest(
 	const prompt = lastUserText(request.messages);
 	const forced = rt.getForced?.() ?? rt.pins.get(sessionId) ?? flavorBias(flavor);
 	const decided = await decideTier({ config: rt.config, prompt, ctx, host: rt.host, log: rt.log, ...(forced ? { forced } : {}) });
+	// #53: keep the last classifier failure on the runtime so `/router status` can show
+	// it without an env var or a diagnostic probe. A successful classification clears it.
+	if (decided.classifierFailure) {
+		rt.lastClassifierError = { ...decided.classifierFailure, turn: userTurn(request.messages), at: Date.now() };
+	} else if (decided.source === "classifier") {
+		rt.lastClassifierError = undefined;
+	}
 	const decision = applyPolicy(rt.config, decided, phase);
 
 	let tier: Tier = decision.tier;

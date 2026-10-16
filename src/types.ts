@@ -153,6 +153,20 @@ export interface Decision {
 	score: number;
 	source: "classifier" | "heuristic" | "pin";
 	reason: string;
+	/** Set when a classifier was configured but failed, so the tier fell back (#53). */
+	classifierFailure?: { ref: string; message: string };
+}
+
+/** Most recent classifier failure, surfaced by `/router status` (#53). */
+export interface ClassifierFailure {
+	/** The configured classifier ref that failed. */
+	ref: string;
+	/** The failure text, possibly multi-line (host errors often are). */
+	message: string;
+	/** User-turn index the failure happened on, for "it still works?" context. */
+	turn: number;
+	/** Unix ms, for ordering and debugging. */
+	at: number;
 }
 
 /** A reserved local slot. Mirrored to a file so other pi processes can see it. */
