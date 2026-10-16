@@ -1,0 +1,112 @@
+{"prompt": "rename the variable `usrCnt` to `userCount` in src/auth.ts", "label": "local"}
+{"prompt": "fix the typo in the README: 'recieve' -> 'receive'", "label": "local"}
+{"prompt": "format this file with prettier", "label": "local"}
+{"prompt": "run the linter and fix any warnings in src/utils.ts", "label": "local"}
+{"prompt": "add a docstring to the parseConfig function", "label": "local"}
+{"prompt": "add a comment explaining what this regex does", "label": "local"}
+{"prompt": "explain what src/governor.ts does", "label": "local"}
+{"prompt": "what does the `--experimental-strip-types` flag mean?", "label": "local"}
+{"prompt": "list all the files in the test directory", "label": "local"}
+{"prompt": "find where the string 'maxConcurrent' is used", "label": "local"}
+{"prompt": "grep for TODO comments in the codebase", "label": "local"}
+{"prompt": "summarize what changed in the last commit", "label": "local"}
+{"prompt": "show me the git blame for line 42 of index.ts", "label": "local"}
+{"prompt": "read package.json and tell me the scripts available", "label": "local"}
+{"prompt": "what version of node does this project require?", "label": "local"}
+{"prompt": "delete the unused import in commands.ts", "label": "local"}
+{"prompt": "convert these tabs to spaces in the config file", "label": "local"}
+{"prompt": "update the copyright year in LICENSE to 2026", "label": "local"}
+{"prompt": "add a missing semicolon on line 17", "label": "local"}
+{"prompt": "remove the console.log statement from the router", "label": "local"}
+{"prompt": "rename the test file from foo.test.ts to bar.test.ts", "label": "local"}
+{"prompt": "move the helper function to the bottom of the file", "label": "local"}
+{"prompt": "sort these imports alphabetically", "label": "local"}
+{"prompt": "change the default timeout from 4000 to 5000", "label": "local"}
+{"prompt": "add an entry to .gitignore for .DS_Store", "label": "local"}
+{"prompt": "what is the current git branch?", "label": "local"}
+{"prompt": "show me the last 5 commits", "label": "local"}
+{"prompt": "count the lines in src/telemetry.ts", "label": "local"}
+{"prompt": "copy the CI badge markup into the README", "label": "local"}
+{"prompt": "make this error message clearer: 'invalid ref'", "label": "local"}
+{"prompt": "add a unit test that asserts splitRef returns undefined for 'noslash'", "label": "local"}
+{"prompt": "write a test for the formatStats function's empty-window case", "label": "local"}
+{"prompt": "add JSDoc types to the options parameter", "label": "local"}
+{"prompt": "translate this README section into plain English", "label": "local"}
+{"prompt": "list the models configured in catalog.local", "label": "local"}
+{"prompt": "explain the difference between maxConcurrent and maxConcurrentPerModel", "label": "local"}
+{"prompt": "what does the `onFull: spill` setting do?", "label": "local"}
+{"prompt": "show the current router policy settings", "label": "local"}
+{"prompt": "which config file is winning, project or user?", "label": "local"}
+{"prompt": "print the JSON schema of RouterState", "label": "local"}
+{"prompt": "add a `--quiet` flag to the CLI parser", "label": "local"}
+{"prompt": "extract this inline object into a named constant", "label": "local"}
+{"prompt": "replace the magic number 300000 with a named constant", "label": "local"}
+{"prompt": "deduplicate these two identical test setup blocks", "label": "local"}
+{"prompt": "increase the test timeout from 5s to 10s", "label": "local"}
+{"prompt": "add the new file to the package.json files array", "label": "local"}
+{"prompt": "document the telemetry config section in CONFIG.md", "label": "local"}
+{"prompt": "fix the broken markdown link in docs/ARCHITECTURE.md", "label": "local"}
+{"prompt": "align the table columns in the README", "label": "local"}
+{"prompt": "check if all exported functions have tests", "label": "local"}
+{"prompt": "list the npm scripts defined in package.json and what they do", "label": "local"}
+{"prompt": "what node version is required by engines?", "label": "local"}
+{"prompt": "which files import telemetry.ts?", "label": "local"}
+{"prompt": "show me an example of the JSONL ledger format", "label": "local"}
+{"prompt": "explain how the stale slot reaping works", "label": "local"}
+{"prompt": "refactor the routing engine to separate policy from transport", "label": "cloud"}
+{"prompt": "design a plugin architecture for multiple local inference hosts", "label": "cloud"}
+{"prompt": "migrate the codebase from CommonJS to ESM", "label": "cloud"}
+{"prompt": "there's a race condition in the slot acquire path, find and fix it", "label": "cloud"}
+{"prompt": "why does the governor occasionally leak slots under concurrent fanout?", "label": "cloud"}
+{"prompt": "review this PR for architectural issues", "label": "cloud"}
+{"prompt": "plan the implementation of cross-process memory accounting", "label": "cloud"}
+{"prompt": "what's the best strategy for routing between local and cloud models?", "label": "cloud"}
+{"prompt": "analyze the trade-offs of session-sticky vs per-turn classification", "label": "cloud"}
+{"prompt": "audit the extension for security issues before we publish it", "label": "cloud"}
+{"prompt": "threat model the config file loading path", "label": "cloud"}
+{"prompt": "the router is slow on first turn, profile and fix the cold start", "label": "cloud"}
+{"prompt": "investigate why the classifier times out under load", "label": "cloud"}
+{"prompt": "the tests pass locally but fail in CI, find the root cause", "label": "cloud"}
+{"prompt": "redesign the telemetry format so stats can be computed incrementally", "label": "cloud"}
+{"prompt": "decide whether we should shard the slot directory by host", "label": "cloud"}
+{"prompt": "implement an adapter layer for ollama, llama.cpp, and LM Studio", "label": "cloud"}
+{"prompt": "write a spike to determine whether pi reloads extensions in child processes", "label": "cloud"}
+{"prompt": "figure out why LM Studio unloads the classifier mid-session", "label": "cloud"}
+{"prompt": "propose a heuristic for detecting when a local model is struggling", "label": "cloud"}
+{"prompt": "design the escalation state machine with hysteresis", "label": "cloud"}
+{"prompt": "the memory governor deadlocks when two processes acquire at once, debug it", "label": "cloud"}
+{"prompt": "compare three approaches to streaming routing decisions", "label": "cloud"}
+{"prompt": "decide how to handle a partially-loaded model catalog", "label": "cloud"}
+{"prompt": "implement zero-downtime config reloading", "label": "cloud"}
+{"prompt": "the prompt cache hit rate dropped after the last change, investigate", "label": "cloud"}
+{"prompt": "make the plugin work for users who run vLLM instead of LM Studio", "label": "cloud"}
+{"prompt": "we need to support multiple concurrent sessions without thrashing VRAM", "label": "cloud"}
+{"prompt": "evaluate whether the heuristic should use embeddings", "label": "cloud"}
+{"prompt": "write an architecture decision record for the host abstraction", "label": "cloud"}
+{"prompt": "why does compaction pick the wrong model after routing switches tiers?", "label": "cloud"}
+{"prompt": "find the root cause of the intermittent ECONNREFUSED failures", "label": "cloud"}
+{"prompt": "the classifier accuracy is unknown; propose an evaluation strategy", "label": "cloud"}
+{"prompt": "design a plugin API for third-party host adapters", "label": "cloud"}
+{"prompt": "refactor the 400-line routeRequest function into testable units", "label": "cloud"}
+{"prompt": "improve the error handling strategy across the extension", "label": "cloud"}
+{"prompt": "make routing decisions explainable to the user", "label": "cloud"}
+{"prompt": "should the governor use file locks or atomic renames? decide and justify", "label": "cloud"}
+{"prompt": "plan a migration path for users with the old config schema", "label": "cloud"}
+{"prompt": "add support for cost-aware routing across three cloud providers", "label": "cloud"}
+{"prompt": "the session state grows unbounded, propose a compaction strategy", "label": "cloud"}
+{"prompt": "review docs/ARCHITECTURE.md and tell me what's missing or wrong", "label": "cloud"}
+{"prompt": "understand the interactions between compaction, forks, and router state", "label": "cloud"}
+{"prompt": "rename `lm` to `host` everywhere in the codebase", "label": "local"}
+{"prompt": "rename the auth module and update all imports", "label": "local"}
+{"prompt": "bump the typescript devDependency to the latest 5.x", "label": "local"}
+{"prompt": "add a test case for the phase flip", "label": "local"}
+{"prompt": "update the changelog with the fixes from this week", "label": "local"}
+{"prompt": "remove the deprecated SystemOneAnswer export", "label": "local"}
+{"prompt": "check whether every error path is covered by a test", "label": "local"}
+{"prompt": "the local model keeps producing invalid JSON, why?", "label": "cloud"}
+{"prompt": "my subagents all route to cloud even when I expect local, debug it", "label": "cloud"}
+{"prompt": "explain the difference between the four router flavors", "label": "local"}
+{"prompt": "what happens if catalog.cloud is empty?", "label": "local"}
+{"prompt": "is it safe to delete the slot files while pi is running?", "label": "cloud"}
+{"prompt": "summarize the open issues by area", "label": "local"}
+{"prompt": "add an issue template for host adapter requests", "label": "local"}

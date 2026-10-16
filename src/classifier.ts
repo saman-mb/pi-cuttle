@@ -16,20 +16,46 @@ import type { Message } from "@earendil-works/pi-ai";
 import type { LocalHost } from "./host.ts";
 import type { Decision, RouterConfig, Tier } from "./types.ts";
 
-/** Signals that lean local (mechanical, small, cheap) vs cloud (design, ambiguous). */
-const LOCAL_HINTS = /\b(rename|typo|format|lint|comment|docstring|read|list|find|where is|grep|summar(y|ise|ize)|explain this file|what does|lookup|look up)\b/i;
-const CLOUD_HINTS = /\b(refactor|architect|design|migrate|race condition|deadlock|security|threat model|why does.*fail|root cause|plan|strategy|trade-?off|across the (codebase|repo))\b/i;
+/**
+ * Signals that lean local: the request names a mechanical operation on a known
+ * target (rename, format, add, list, explain, ...).
+ */
+const MECHANICAL_HINTS =
+	/^(rename|format\b|lint\b|sort\b|align\b|bump\b|update\b|change\b|move\b|extract\b|copy\b|count\b|list\b|show\b|print\b|read\b|summar\w*|explain\b|what (is|does|version|happens)|where is\b|which \w+ (is|are|file)|grep\b|find where\b|delete\b|remove\b|drop\b|add\b|fix (the )?(typo|broken|formatting|indent|markdown|link|import|missing|semicolon)|document\b|check (if|whether)\b|convert\b|replace\b|deduplicat\w*|increase\b|decrease\b|translate\b|write a test\b|use\b|version\b|tell me\b|show me\b)/i;
+
+/**
+ * Signals that need judgement: design, cross-cutting change, hard debugging,
+ * trade-offs, or open-ended evaluation. Deliberately broader than before (#43):
+ * the old two-regex heuristic scored 70.5% on eval/corpus.jsonl, missing every
+ * cloud prompt that did not use one of five magic words.
+ */
+const CLOUD_HINTS =
+	/\b(?<![./])(refactor\w*|architect\w*|redesign|design\w*|migrat\w*|race condition|deadlock\w*|root[- ]?cause|security|threat model|audit\b|strateg\w*|trade-?offs?|evaluat\w*|propose\b|decide\b|compare\b|review\b|investigat\w*|debug\b|diagnos\w*|profile\b|benchmark\w*|optimi[sz]\w*|performance|flaky|intermittent|why\b|how come|understand|analy[sz]\w*|spike\b|implement\b|across\b|multi-?file|plan\b|planning|consider\b|assess\b|recommend\b|choose\b|best (way|approach|strategy)|should (we|i|the)\b|safe\b|risk\w*|interaction\w*|unbounded|shard\w*|streaming|zero-?downtime|explainab\w*|reload\w*|instead of|compatib\w*|thrash\w*|vram|testable|incremental|state machine|hysteresis|plugin api|partially-loaded)\b/i;
 
 /** Crude complexity score in [0,1]; higher means "more likely to need the big model". */
 export function heuristicScore(prompt: string): { score: number; reason: string } {
 	const text = prompt.trim();
 	const lengthScore = Math.min(text.length / 4000, 1); // long prompts trend complex
-	const local = LOCAL_HINTS.test(text) ? 1 : 0;
-	const cloud = CLOUD_HINTS.test(text) ? 1 : 0;
-	const keyword = cloud - local; // -1..1
-	const score = Math.max(0, Math.min(1, 0.5 * lengthScore + 0.5 * (keyword + 1) / 2));
-	const reason = cloud ? "cloud keyword" : local ? "local keyword" : "length only";
-	return { score, reason };
+	const mechanical = MECHANICAL_HINTS.test(text);
+	const complex = CLOUD_HINTS.test(text);
+	let score: number;
+	let reason: string;
+	if (complex && !mechanical) {
+		score = 0.75 + 0.1 * lengthScore;
+		reason = "cloud keyword";
+	} else if (mechanical && !complex) {
+		score = 0.15 + 0.1 * lengthScore;
+		reason = "local keyword";
+	} else if (complex && mechanical) {
+		// Mixed signals: a mechanical verb wrapped around a judgement task. Lean cloud,
+		// because a wrong local decision risks the work; a wrong cloud decision only costs.
+		score = 0.55 + 0.1 * lengthScore;
+		reason = "mixed signals";
+	} else {
+		score = 0.3 + 0.55 * lengthScore;
+		reason = "length only";
+	}
+	return { score: Math.max(0, Math.min(1, score)), reason };
 }
 
 function heuristicDecision(config: RouterConfig, prompt: string): Decision {
