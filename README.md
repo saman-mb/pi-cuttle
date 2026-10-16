@@ -117,6 +117,7 @@ Interactive editing (persists to the user config file):
 /router models          # pick the local, cloud, or decision model
 /router policy          # complexity | cost | phase
 /router limit           # max concurrent local requests
+/router stats [days]    # local share, tokens, estimated $ saved vs all-cloud
 /router local|cloud|auto  # pin this session
 ```
 

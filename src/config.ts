@@ -36,6 +36,7 @@ export const DEFAULTS: RouterConfig = {
 		slotDir: join(homedir(), ".pi", "agent", "model-router", "slots"),
 		staleSlotMs: 300_000,
 	},
+	telemetry: { enabled: true, path: join(homedir(), ".pi", "agent", "model-router", "decisions.jsonl"), pricing: {} },
 	lmstudio: { baseUrl: "http://localhost:1235", timeoutMs: 8_000 },
 	ollama: { baseUrl: "http://localhost:11434", timeoutMs: 8_000 },
 	openai: { baseUrl: "http://localhost:8080", timeoutMs: 8_000 },
@@ -91,6 +92,7 @@ export function applyOverrides(config: RouterConfig, parsed: unknown): RouterCon
 		catalog: mergeSection(config.catalog, parsed.catalog),
 		policy: mergePolicy(config.policy, parsed.policy),
 		local: mergeSection(config.local, parsed.local),
+		telemetry: mergeSection(config.telemetry, parsed.telemetry),
 		lmstudio: mergeSection(config.lmstudio, parsed.lmstudio),
 		ollama: mergeSection(config.ollama, parsed.ollama),
 		openai: mergeSection(config.openai, parsed.openai),
@@ -122,6 +124,7 @@ export function loadConfig(cwd: string): LoadedConfig {
 		sources.push(resolve(path));	}
 
 	config.local.slotDir = resolve(expandHome(config.local.slotDir));
+	config.telemetry.path = resolve(expandHome(config.telemetry.path));
 	config.lmstudio.baseUrl = config.lmstudio.baseUrl.replace(/\/+$/, "");
 	config.ollama.baseUrl = config.ollama.baseUrl.replace(/\/+$/, "");
 	config.openai.baseUrl = config.openai.baseUrl.replace(/\/+$/, "");

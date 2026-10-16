@@ -101,6 +101,31 @@ target is not loaded, the governor unloads other models (all instances of them) 
 free a slot; `/router doctor` warns when this is misconfigured. This applies to
 hosts that report loaded state (LM Studio, ollama).
 
+## `telemetry`
+
+The decision ledger behind `/router stats`. One JSONL line per assistant turn —
+provider, model, tier, tokens. Metadata only; prompt and response content are never
+written.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `enabled` | boolean | `true` | Record decisions and enable `/router stats`. |
+| `path` | string | `~/.pi/agent/model-router/decisions.jsonl` | Ledger file. `~` expands. |
+| `pricing` | object | `{}` | USD per million tokens, keyed by `provider/model`: `{ "input": 3, "output": 15 }`. |
+| `baseline` | string | unset | Model ref the all-cloud baseline is priced at; usually `catalog.cloud[0]`. |
+
+`/router stats [days]` (default 7) prints turns, the local share, token split, and —
+when pricing is complete — spent vs the all-cloud baseline and the estimated saving.
+Missing prices degrade to counts rather than inventing numbers.
+
+```json
+"telemetry": {
+  "enabled": true,
+  "baseline": "opencode-go/deepseek-v4.1-flash",
+  "pricing": { "opencode-go/deepseek-v4.1-flash": { "input": 0.14, "output": 0.56 } }
+}
+```
+
 ## `lmstudio`, `ollama`, `openai`
 
 Connection settings per host; only the one named by `host` is used.

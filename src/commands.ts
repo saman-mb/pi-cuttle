@@ -8,6 +8,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 
 import { saveUserConfig, type LoadedConfig } from "./config.ts";
 import { isLocalProvider, splitRef } from "./classifier.ts";
+import { formatStats, type Telemetry } from "./telemetry.ts";
 import type { RouterRuntime } from "./virtual-models.ts";
 import type { PolicyMode, RouterConfig, Tier } from "./types.ts";
 
@@ -161,12 +162,18 @@ async function status(rt: RouterRuntime, loaded: LoadedConfig, ctx: ExtensionCom
 	ctx.ui.notify(lines.join("\n"), "info");
 }
 
-export function registerRouterCommand(pi: ExtensionAPI, rt: RouterRuntime, loaded: LoadedConfig): void {
+export function registerRouterCommand(pi: ExtensionAPI, rt: RouterRuntime, loaded: LoadedConfig, telemetry: Telemetry): void {
 	pi.registerCommand("router", {
 		description: "Inspect and edit local/cloud model routing",
 		handler: async (args, ctx) => {
-			const [sub = "status"] = args.trim().split(/\s+/, 1);
+			const [sub = "status", extra] = args.trim().split(/\s+/);
 			const sessionId = ctx.sessionManager.getSessionId();
+
+			if (sub === "stats") {
+				const days = Number.isFinite(Number(extra)) && Number(extra) > 0 ? Math.floor(Number(extra)) : 7;
+				ctx.ui.notify(formatStats(telemetry.stats(days), rt.config.telemetry.baseline), "info");
+				return;
+			}
 
 			if (sub === "auto" || sub === "local" || sub === "cloud") {
 				if (sub === "auto") rt.pins.delete(sessionId);

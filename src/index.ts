@@ -19,8 +19,18 @@ import { loadConfig } from "./config.ts";
 import { createHost } from "./host.ts";
 import { LocalGovernor } from "./governor.ts";
 import { registerRouterCommand } from "./commands.ts";
+import { Telemetry } from "./telemetry.ts";
 import { registerVirtualModels, type RouterRuntime } from "./virtual-models.ts";
 import type { Tier } from "./types.ts";
+
+/** Session id for telemetry, tolerating a minimal context (tests, early teardown). */
+function safeSessionId(ctx: { sessionManager?: { getSessionId?: () => string } }): string | undefined {
+	try {
+		return ctx.sessionManager?.getSessionId?.();
+	} catch {
+		return undefined;
+	}
+}
 
 /** True when the user pinned a model on the command line; auto-select must not override it. */
 function explicitModelRequested(argv: readonly string[]): boolean {
@@ -34,6 +44,7 @@ export default function modelRouter(pi: ExtensionAPI): void {
 	log?.(`factory cwd=${process.cwd()} autoSelect=${loaded.config.autoSelect} local=${loaded.config.catalog.local.join(",")} cloud=${loaded.config.catalog.cloud.join(",")} sources=${loaded.sources.join("|")} warnings=${loaded.warnings.join(";")}`);
 	const host = createHost(loaded.config);
 	const governor = new LocalGovernor(loaded.config.local, host);
+	const telemetry = new Telemetry(loaded.config.telemetry, loaded.config.catalog.local);
 
 	const rt: RouterRuntime = {
 		config: loaded.config,
@@ -61,7 +72,7 @@ export default function modelRouter(pi: ExtensionAPI): void {
 	pi.registerFlag("router-force", { type: "string", description: "Force router tier: local | cloud" });
 
 	registerVirtualModels(pi, rt);
-	registerRouterCommand(pi, rt, loaded);
+	registerRouterCommand(pi, rt, loaded, telemetry);
 
 	// #24: select the router at session start. This is what makes routing the default for
 	// both the main agent and any child that loads this extension.
@@ -80,10 +91,27 @@ export default function modelRouter(pi: ExtensionAPI): void {
 	// #38: release for ANY provider. Slots are keyed by model id and only ever exist for
 	// local models, so a cloud message is a harmless no-op; the old `provider === "lmstudio"`
 	// guard leaked slots for ollama/llama.cpp-served local models.
-	pi.on("message_end", (event) => {
-		const message = event.message as { role?: string; model?: string };
+	// #42: the same hook writes the decision ledger — metadata only, best-effort.
+	pi.on("message_end", (event, ctx) => {
+		const message = event.message as {
+			role?: string;
+			provider?: string;
+			model?: string;
+			usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+		};
 		if (message.role !== "assistant" || !message.model) return;
 		governor.releaseOne(message.model);
+		telemetry.record({
+			ts: Date.now(),
+			...(safeSessionId(ctx) ? { sessionId: safeSessionId(ctx)! } : {}),
+			provider: message.provider ?? "",
+			model: message.model,
+			tier: telemetry.isLocalModel(message.model) ? "local" : "cloud",
+			inputTokens: message.usage?.input ?? 0,
+			outputTokens: message.usage?.output ?? 0,
+			...(message.usage?.cacheRead !== undefined ? { cacheReadTokens: message.usage.cacheRead } : {}),
+			...(message.usage?.cacheWrite !== undefined ? { cacheWriteTokens: message.usage.cacheWrite } : {}),
+		});
 	});
 
 	// Safety net for teardown; stale reaping covers crashes.

@@ -82,6 +82,17 @@ export interface LocalConfig {
 	staleSlotMs: number;
 }
 
+export interface TelemetryConfig {
+	/** Append one JSONL line per assistant turn and expose `/router stats`. */
+	enabled: boolean;
+	/** Ledger file. `~` is expanded. Metadata only, never prompt content. */
+	path: string;
+	/** USD per million tokens, keyed by `provider/model`. */
+	pricing: Record<string, { input: number; output: number }>;
+	/** Model ref the "saved vs all-cloud" baseline is priced at (usually catalog.cloud[0]). */
+	baseline?: string;
+}
+
 export interface LmStudioConfig {
 	baseUrl: string;
 	apiToken?: string;
@@ -107,6 +118,7 @@ export interface RouterConfig {
 	catalog: CatalogConfig;
 	policy: PolicyConfig;
 	local: LocalConfig;
+	telemetry: TelemetryConfig;
 	lmstudio: LmStudioConfig;
 	ollama: OllamaConfig;
 	openai: OpenAiConfig;
