@@ -3,7 +3,7 @@
 All notable changes to this project. Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.3.0] — 2026-10-18
 
 ### Added
 
@@ -13,13 +13,6 @@ versions follow [SemVer](https://semver.org/).
 - **`/cuttle shadow-report [days]`** prints gate agreement statistics from
   `~/.pi/agent/pi-cuttle/shadow.jsonl`, so gates can be promoted out of shadow only after they
   agree with live outcomes.
-
-### Changed
-
-- `Decision` now carries an optional `gates` field with normalized verdicts, and the decision
-  reason includes a summary when gates are active.
-
-## [0.3.0] — 2026-10-18
 
 ### Changed
 
@@ -42,6 +35,8 @@ versions follow [SemVer](https://semver.org/).
   native API. With the router using pi's registry, the extension no longer has direct visibility
   into what a server keeps loaded. The cross-process concurrency cap (`local.maxConcurrent`) still
   prevents fanout from swamping the server; configure server-side memory limits separately.
+- `Decision` now carries an optional `gates` field with normalized verdicts, and the decision
+  reason includes a summary when gates are active.
 
 ### Fixed
 
