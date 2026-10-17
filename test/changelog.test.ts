@@ -25,8 +25,11 @@ const read = (path: string): string => readFileSync(new URL(`../${path}`, import
 const changelog = read("CHANGELOG.md");
 const pkg = JSON.parse(read("package.json")) as { version: string };
 
-/** `1.2.3` -> `1\.2\.3`, so a version can be dropped into a pattern unescaped. */
-const escapeVersion = (version: string): string => version.replace(/\./g, "\\.");
+/** Escape a version for a regex, so `0.2.0` and a future `0.3.0-rc.1` both drop in safely. */
+const escapeVersion = (version: string): string => version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** A release version, prerelease suffix tolerated: `1.2.3`, `1.2.3-rc.1`. */
+const RELEASE_VERSION = "(\\d+\\.\\d+\\.\\d+(?:-[\\w.]+)?)";
 
 /** The separator the changelog uses between version and date; em dash today, hyphen tolerated. */
 const SEPARATOR = "\\s*[\u2014-]\\s*";
@@ -43,7 +46,7 @@ test("the shipped version has a dated release heading (#65)", () => {
 });
 
 test("every release heading has a matching link reference (#65)", () => {
-	for (const match of changelog.matchAll(/^## \[(\d+\.\d+\.\d+)\]/gm)) {
+	for (const match of changelog.matchAll(new RegExp(`^## \\[${RELEASE_VERSION}\\]`, "gm"))) {
 		const version = match[1] as string;
 		const reference = new RegExp(`^\\[${escapeVersion(version)}\\]: (\\S+)\\s*$`, "m");
 		const url = reference.exec(changelog)?.[1];
@@ -54,9 +57,12 @@ test("every release heading has a matching link reference (#65)", () => {
 
 test("the Unreleased compare base starts from the shipped version (#65)", () => {
 	// If an Unreleased section exists it must compare from the version that just shipped;
-	// left pointing at an older base it silently hides everything released in between.
+	// left pointing at an older base it silently hides everything released in between. Keyed
+	// off the heading rather than the link line: a section whose link line was deleted used to
+	// pass this test in silence, which is the same "no gate looked at it" failure as #65 itself.
+	if (!/^## \[Unreleased\]/m.test(changelog)) return;
 	const url = /^\[Unreleased\]: (\S+)\s*$/m.exec(changelog)?.[1];
-	if (!url) return;
+	assert.ok(url, "CHANGELOG.md has an [Unreleased] section but no [Unreleased]: link line");
 	assert.match(
 		url,
 		new RegExp(`/compare/v${escapeVersion(pkg.version)}\\.\\.\\.HEAD$`),
