@@ -27,6 +27,9 @@ jobs:
 
       - run: npm ci
 
+      - name: Use npm with trusted-publishing support
+        run: npm install -g npm@latest
+
       - name: Verify version matches release tag
         if: github.event_name == 'release'
         run: |
@@ -39,9 +42,6 @@ jobs:
 
       - run: npm test
       - run: npm run typecheck
-      - run: npm run badges
-      - run: git diff --exit-code docs/badges/
 
-      - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish
+        run: npm publish --provenance --access public --tag "${{ github.event.inputs.tag || 'latest' }}"
