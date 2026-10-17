@@ -5,6 +5,8 @@ versions follow [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-10-16
+
 ### Changed
 
 - **The package is now `pi-cuttle`** (was `pi-model-router`). Nothing from this repository had
@@ -49,6 +51,20 @@ versions follow [SemVer](https://semver.org/).
   started all produced the same misleading capacity reason while every turn went to paid cloud.
   The spill reason is now built from what actually happened, naming the offending ref and
   pointing at `catalog.local`.
+- **Turns that resolved no model are no longer recorded as cloud spend** (#62). A message pi
+  attributes to the virtual provider means routing never resolved a target, but it was written to
+  the ledger as a cloud turn — a turn that never happened, counting against the local share and
+  the savings figure `/cuttle stats` reports. Slot release is unaffected; only the ledger write is
+  skipped.
+- **A cold session's first classification no longer times out** (#63). The session-start preload
+  loads the warm target alongside the classifier, whose first call then exceeded the default
+  budget and silently fell back to the heuristic. A timed-out call is retried once at double the
+  budget; `reclassify: session` means that costs at most one wait per session.
+- **The preload no longer leaks a model instance per session** (#64). LM Studio creates a new
+  instance for every `load` call even when the model is already resident, and the preload calls it
+  once per session — so every session added another copy of the local model, and its VRAM. The
+  loaded-model ceiling could not see it: it counts distinct keys, not instances, so six instances
+  of a 27B model accumulated with `maxLoadedModels` set to 1. A resident model is now left alone.
 
 - **Decision-model classifiers are no longer bypassed silently** (#50). `classifier.stateChars`
   defaults to 16000, but a decision model answers in a single forward pass and LM Studio
@@ -114,5 +130,6 @@ OpenAI-compatible host behind the same abstraction.
 - The heuristic scored 70.5% on the routing corpus (33 cloud prompts misrouted to
   local); rewritten as signal-based scoring, measured at 100% on the corpus (#43).
 
-[Unreleased]: https://github.com/saman-mb/pi-cuttle/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/saman-mb/pi-cuttle/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.2.0
 [0.1.0]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.1.0

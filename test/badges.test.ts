@@ -11,10 +11,11 @@
  *     recursive suite run or brittle static counting, and it drifts on every added
  *     test. "passing" is the claim; CI enforces it; this file stops anyone quietly
  *     putting a number back.
- *   - The version badge is pinned to package.json, the shipped version. The
- *     CHANGELOG heading is deliberately NOT asserted here: a package.json bump is
- *     the badge's cue to re-render, while release notes are cut by the release
- *     process and may legitimately lag mid-cycle.
+ *   - The version badge is pinned to package.json, the shipped version. Whether the
+ *     CHANGELOG carries a matching release heading is asserted in test/changelog.test.ts
+ *     instead: #55 left that unpinned on the reasoning that release notes may lag a cycle,
+ *     and that reasoning is what #65 turned out to be — a version advertised on the README
+ *     with no release notes anywhere, which no gate looked at.
  *
  * Rendering is deterministic (same claim -> byte-identical SVG), so a failure here
  * is fixed by one command: `npm run badges`.
