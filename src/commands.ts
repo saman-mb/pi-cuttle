@@ -9,6 +9,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { saveUserConfig, type LoadedConfig } from "./config.ts";
 import { splitRef } from "./classifier.ts";
 import { formatStats, type Telemetry } from "./telemetry.ts";
+import { computeAgreement, formatAgreement, readShadow } from "./shadow.ts";
 import type { RouterRuntime } from "./virtual-models.ts";
 import type { GovernorStatus, PolicyMode, RouterConfig, Tier } from "./types.ts";
 import { VIRTUAL_PROVIDER } from "./types.ts";
@@ -173,6 +174,14 @@ export function registerCuttleCommand(pi: ExtensionAPI, rt: RouterRuntime, loade
 			if (sub === "stats") {
 				const days = Number.isFinite(Number(extra)) && Number(extra) > 0 ? Math.floor(Number(extra)) : 7;
 				ctx.ui.notify(formatStats(telemetry.stats(days), rt.config.telemetry.baseline), "info");
+				return;
+			}
+
+			if (sub === "shadow-report") {
+				const days = Number.isFinite(Number(extra)) && Number(extra) > 0 ? Math.floor(Number(extra)) : 7;
+				const cutoff = Date.now() - days * 86_400_000;
+				const records = readShadow().filter((r) => r.at >= cutoff);
+				ctx.ui.notify(formatAgreement(computeAgreement(records)), "info");
 				return;
 			}
 

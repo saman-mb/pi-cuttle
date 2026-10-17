@@ -5,6 +5,20 @@ versions follow [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Phase-2 routing gates** (`delegate`, `role`, `result judge`, `struggle trigger`). Each gate
+  is config-gated and starts in shadow mode by default. The classifier asks gate questions in
+  the same forward pass as the complexity question, so there is no extra latency per turn.
+- **`/cuttle shadow-report [days]`** prints gate agreement statistics from
+  `~/.pi/agent/pi-cuttle/shadow.jsonl`, so gates can be promoted out of shadow only after they
+  agree with live outcomes.
+
+### Changed
+
+- `Decision` now carries an optional `gates` field with normalized verdicts, and the decision
+  reason includes a summary when gates are active.
+
 ## [0.3.0] — 2026-10-18
 
 ### Changed

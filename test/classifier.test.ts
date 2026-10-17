@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { decideTier, applyPolicy, heuristicScore, splitRef } from "../src/classifier.ts";
+import { decideTier, applyPolicy, buildQuestions, heuristicScore, parseGateVerdicts, splitRef } from "../src/classifier.ts";
 import { DEFAULTS } from "../src/config.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -156,4 +156,76 @@ test("a classifier failure is surfaced on the router log", async () => {
 	assert.equal(d.source, "heuristic");
 	assert.match(d.reason, /model kaput/);
 	assert.match(logs.join("\n"), /classifier: model kaput/);
+});
+
+test("buildQuestions always includes complexity", () => {
+	const qs = buildQuestions(DEFAULTS);
+	assert.ok(qs.complexity);
+	assert.equal(Object.keys(qs).length, 1);
+});
+
+test("buildQuestions adds enabled gates in one question record", () => {
+	const config = {
+		...DEFAULTS,
+		gates: {
+			delegate: { enabled: true, choices: ["scout", "worker"] },
+			role: { enabled: true, choices: ["driver"] },
+			struggle: { enabled: true },
+		},
+	};
+	const qs = buildQuestions(config);
+	assert.ok(qs.complexity);
+	assert.ok(qs.delegate);
+	assert.ok(qs.delegate_role);
+	assert.ok(qs.role);
+	assert.ok(qs.struggle);
+	assert.equal(Object.keys(qs).length, 5);
+});
+
+test("buildQuestions adds judge only after a tool result", () => {
+	const config = { ...DEFAULTS, gates: { judge: { enabled: true } } };
+	const noTool = buildQuestions(config, [{ role: "user", content: "hi" }] as never);
+	assert.equal(noTool.judge, undefined);
+	const tool = buildQuestions(config, [
+		{ role: "user", content: "hi" },
+		{ role: "toolResult", content: "done", isError: false },
+	] as never);
+	assert.ok(tool.judge);
+});
+
+test("parseGateVerdicts normalizes classifier answers", () => {
+	const answers = {
+		complexity: { type: "choice", choice: "complex", probabilities: { complex: 0.9 }, confidence: 0.9 },
+		delegate: { type: "bool", probability: 0.8 },
+		role: { type: "choice", choice: "scout", probabilities: { scout: 0.8 }, confidence: 0.8 },
+	};
+	const gates = parseGateVerdicts(answers, {
+		delegate: { enabled: true },
+		role: { enabled: true, shadow: false },
+	});
+	assert.equal(gates?.delegate?.type, "bool");
+	assert.equal((gates?.delegate as { shadow: boolean }).shadow, true);
+	assert.equal((gates?.role as { shadow: boolean }).shadow, false);
+});
+
+test("decideTier returns gate verdicts when gates are enabled", async () => {
+	const ctx = fakeCtx({
+		stopReason: "stop",
+		answers: {
+			complexity: { type: "choice", choice: "standard", probabilities: { standard: 0.95, complex: 0.05 } },
+			struggle: { type: "bool", probability: 0.2 },
+		},
+	});
+	const d = await decideTier({
+		config: {
+			...DEFAULTS,
+			classifier: { ...DEFAULTS.classifier, model: "llama.cpp/kev" },
+			gates: { struggle: { enabled: true } },
+		},
+		prompt: "rename a variable",
+		ctx,
+	});
+	assert.equal(d.source, "classifier");
+	assert.equal(d.gates?.struggle?.type, "bool");
+	assert.match(d.reason, /struggle:/);
 });

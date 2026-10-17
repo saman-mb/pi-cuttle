@@ -91,6 +91,50 @@ export interface TelemetryConfig {
 	baseline?: string;
 }
 
+/** A single gate's configuration. */
+export interface GateConfig {
+	/** When false, the gate is skipped entirely. */
+	enabled: boolean;
+	/**
+	 * When true, the gate records its verdict but never changes routing. Shadow mode runs the
+	 * gate against live traffic so its agreement with the existing router can be measured before
+	 * it is allowed to escalate, delegate, or block.
+	 */
+	shadow?: boolean;
+	/** Minimum confidence/probability before the gate's verdict is considered binding. */
+	threshold?: number;
+}
+
+/** Candidate roles the classifier may assign when a gate asks for a role. */
+export interface ChoiceGateConfig extends GateConfig {
+	/** Ordered list of allowed answers. */
+	choices?: string[];
+}
+
+/** Phase-2 routing gates, all off by default. */
+export interface GatesConfig {
+	/**
+	 * Whether this turn should be delegated to a subagent. When confident and not in shadow mode,
+	 * the router can return a delegation signal for the runtime to act on.
+	 */
+	delegate?: ChoiceGateConfig;
+	/**
+	 * What role the current turn should play (e.g. scout, worker, oracle, driver). Logged and,
+	 * when not shadowed, attached to the decision for downstream tooling.
+	 */
+	role?: ChoiceGateConfig;
+	/**
+	 * After a subagent returns, judge whether its result satisfied the request. In shadow mode
+	 * this is compared against the signal-based struggle/escalation path.
+	 */
+	judge?: GateConfig;
+	/**
+	 * Predict struggle from the prompt/conversation before any tool errors occur. Shadow mode
+	 * compares this to the existing error-driven escalation.
+	 */
+	struggle?: GateConfig;
+}
+
 export interface RouterConfig {
 	/** When true, new sessions start on `cuttle/auto` and routing is active. */
 	autoSelect: boolean;
@@ -99,6 +143,8 @@ export interface RouterConfig {
 	policy: PolicyConfig;
 	local: LocalConfig;
 	telemetry: TelemetryConfig;
+	/** Optional phase-2 gates. */
+	gates?: GatesConfig;
 }
 
 /** Router state persisted on the session branch by pi. Must be JSON-serializable. */
@@ -121,6 +167,19 @@ export interface RouterState {
 	};
 }
 
+/** Answer to one gate question, normalized for logging and routing. */
+export type GateAnswer =
+	| { type: "choice"; choice: string; probabilities: Record<string, number>; confidence: number }
+	| { type: "bool"; probability: number }
+	| { type: "score"; score: number; confidence: number };
+
+export interface GateVerdicts {
+	delegate?: GateAnswer & { shadow: boolean };
+	role?: GateAnswer & { shadow: boolean };
+	judge?: GateAnswer & { shadow: boolean };
+	struggle?: GateAnswer & { shadow: boolean };
+}
+
 export interface Decision {
 	tier: Tier;
 	score: number;
@@ -128,6 +187,8 @@ export interface Decision {
 	reason: string;
 	/** Set when a classifier was configured but failed, so the tier fell back (#53). */
 	classifierFailure?: { ref: string; message: string };
+	/** Phase-2 gate verdicts, when gates are configured. */
+	gates?: GateVerdicts;
 }
 
 /** Most recent classifier failure, surfaced by `/cuttle status` (#53). */

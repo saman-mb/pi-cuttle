@@ -10,7 +10,16 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ClassifierQuestion, Message } from "@earendil-works/pi-ai";
 
-import type { Decision, RouterConfig, Tier } from "./types.ts";
+import type {
+	ChoiceGateConfig,
+	Decision,
+	GateAnswer,
+	GateConfig,
+	GateVerdicts,
+	GatesConfig,
+	RouterConfig,
+	Tier,
+} from "./types.ts";
 
 /**
  * Signals that lean local: the request names a mechanical operation on a known
@@ -110,7 +119,111 @@ const COMPLEXITY_QUESTION: ClassifierQuestion = {
 		complex: "Design judgement, cross-cutting change, or hard debugging",
 	},
 };
-const COMPLEXITY_QUESTIONS: Record<string, ClassifierQuestion> = { complexity: COMPLEXITY_QUESTION };
+
+function defaultChoices(kind: keyof GatesConfig): string[] {
+	switch (kind) {
+		case "delegate":
+			return ["inline", "scout", "worker", "oracle", "driver"];
+		case "role":
+			return ["scout", "worker", "oracle", "driver"];
+		default:
+			return [];
+	}
+}
+
+function choiceQuestion(cfg: ChoiceGateConfig, kind: keyof GatesConfig): ClassifierQuestion {
+	const choices = cfg.choices && cfg.choices.length > 0 ? cfg.choices : defaultChoices(kind);
+	return {
+		type: "choice",
+		instructions: `What is the most appropriate ${kind} for this turn?`,
+		criteria: Object.fromEntries(choices.map((c) => [c, c])),
+	};
+}
+
+function boolQuestion(instructions: string): ClassifierQuestion {
+	return { type: "bool", instructions, criteria: { true: "yes", false: "no" } };
+}
+
+/** Whether any gate is configured and enabled. */
+export function gatesActive(gates?: GatesConfig): boolean {
+	if (!gates) return false;
+	return Object.values(gates).some((g) => g?.enabled);
+}
+
+/**
+ * Build the full set of classifier questions for a turn. Complexity is always asked.
+ * Phase-2 gates are added when enabled. Result judge is included only when the most
+ * recent message is a tool result (i.e. a subagent or tool just returned).
+ */
+export function buildQuestions(
+	config: RouterConfig,
+	messages?: readonly Message[],
+): Record<string, ClassifierQuestion> {
+	const questions: Record<string, ClassifierQuestion> = { complexity: COMPLEXITY_QUESTION };
+	const gates = config.gates;
+	if (!gates) return questions;
+
+	if (gates.delegate?.enabled) {
+		questions.delegate = boolQuestion("Should this turn be delegated to a subagent?");
+		if (gates.delegate.choices && gates.delegate.choices.length > 0) {
+			questions.delegate_role = choiceQuestion(gates.delegate, "delegate");
+		}
+	}
+	if (gates.role?.enabled) {
+		questions.role = choiceQuestion(gates.role, "role");
+	}
+	if (gates.struggle?.enabled) {
+		questions.struggle = boolQuestion("Is the current request likely to cause the model to struggle?");
+	}
+
+	const last = messages?.[messages.length - 1];
+	if (gates.judge?.enabled && last?.role === "toolResult") {
+		questions.judge = boolQuestion("Did the most recent tool/subagent result satisfy the request?");
+	}
+
+	return questions;
+}
+
+function toGateAnswer(answer: { type: "choice"; choice: string; probabilities: Record<string, number>; confidence: number } | { type: "bool"; probability: number } | { type: "score"; score: number; confidence: number }): GateAnswer {
+	if (answer.type === "choice") {
+		return { type: "choice", choice: answer.choice, probabilities: answer.probabilities, confidence: answer.confidence };
+	}
+	if (answer.type === "bool") {
+		return { type: "bool", probability: answer.probability };
+	}
+	return { type: "score", score: answer.score, confidence: answer.confidence };
+}
+
+function binding(cfg: GateConfig, answer: GateAnswer): boolean {
+	const threshold = cfg.threshold ?? 0.7;
+	if (answer.type === "bool") return answer.probability >= threshold;
+	if (answer.type === "score") return answer.score >= threshold;
+	return answer.confidence >= threshold;
+}
+
+/**
+ * Extract normalized gate verdicts from classifier answers. Each verdict carries whether the
+ * gate is currently in shadow mode (so callers can log without acting).
+ */
+export function parseGateVerdicts(answers: Record<string, unknown>, gates?: GatesConfig): GateVerdicts | undefined {
+	if (!gatesActive(gates)) return undefined;
+	const verdicts: GateVerdicts = {};
+	const gateMap = gates ?? {};
+
+	const add = (key: keyof GateVerdicts, cfg?: GateConfig) => {
+		const raw = answers[key];
+		if (!cfg?.enabled || typeof raw !== "object" || raw === null) return;
+		const answer = toGateAnswer(raw as GateAnswer & { type: "choice" | "bool" | "score" });
+		verdicts[key] = { ...answer, shadow: cfg.shadow !== false };
+	};
+
+	add("delegate", gateMap.delegate);
+	add("role", gateMap.role);
+	add("struggle", gateMap.struggle);
+	add("judge", gateMap.judge);
+
+	return Object.keys(verdicts).length > 0 ? verdicts : undefined;
+}
 
 /**
  * Decide the tier for one prompt. Never throws: any failure falls back per config.
@@ -118,16 +231,20 @@ const COMPLEXITY_QUESTIONS: Record<string, ClassifierQuestion> = { complexity: C
  * The classifier is always invoked through pi's model registry, so it works with any
  * provider pi already knows about (llama.cpp router, cloud classifiers, etc.) without
  * hard-coding a host or protocol.
+ *
+ * When phase-2 gates are enabled they are asked in the same forward pass as complexity,
+ * satisfying the one-pass invariant.
  */
 export async function decideTier(input: {
 	config: RouterConfig;
 	prompt: string;
 	ctx: ExtensionContext;
+	messages?: readonly Message[];
 	forced?: Tier;
 	/** Optional router log sink; receives trim and failure lines. */
 	log?: (message: string) => void;
 }): Promise<Decision> {
-	const { config, prompt, ctx, forced, log } = input;
+	const { config, prompt, ctx, messages, forced, log } = input;
 	if (forced) return { tier: forced, score: 0, source: "pin", reason: `pinned ${forced}` };
 	if (config.classifier.fallback === "heuristic" && !config.classifier.model) return heuristicDecision(config, prompt);
 
@@ -141,19 +258,29 @@ export async function decideTier(input: {
 	try {
 		const model = ctx.modelRegistry.findOfType("classifier", parsed.provider, parsed.id);
 		if (!model) throw new Error(`classifier ${parsed.provider}/${parsed.id} not in pi's catalog`);
+		const questions = buildQuestions(config, messages);
 		const result = await ctx.modelRegistry.classify(
 			model,
 			{
 				state: { prompt: clipped },
-				questions: { complexity: COMPLEXITY_QUESTION },
+				questions,
 			},
 			{ signal: AbortSignal.timeout(config.classifier.timeoutMs) },
 		);
-		const choice = result.stopReason === "stop" ? result.answers.complexity : undefined;
+		const answers = result.stopReason === "stop" ? result.answers : {};
+		const choice = answers.complexity;
 		if (choice?.type === "choice") {
 			const complex = choice.probabilities?.complex ?? (choice.choice === "complex" ? 1 : 0);
 			const tier: Tier = complex >= 0.5 ? "cloud" : "local";
-			return { tier, score: complex, source: "classifier", reason: `classifier p(complex)=${complex.toFixed(2)}` };
+			const gates = parseGateVerdicts(answers, config.gates);
+			const gateSummary = gates ? ` gates=${formatGateSummary(gates)}` : "";
+			return {
+				tier,
+				score: complex,
+				source: "classifier",
+				reason: `classifier p(complex)=${complex.toFixed(2)}${gateSummary}`,
+				gates,
+			};
 		}
 		throw new Error("classifier returned no parseable complexity answer");
 	} catch (error) {
@@ -181,6 +308,16 @@ export async function decideTier(input: {
 	};
 }
 
+function formatGateSummary(gates: GateVerdicts): string {
+	return Object.entries(gates)
+		.map(([key, v]) => {
+			if (v.type === "choice") return `${key}:${v.choice}${v.shadow ? "(shadow)" : ""}`;
+			if (v.type === "bool") return `${key}:p=${v.probability.toFixed(2)}${v.shadow ? "(shadow)" : ""}`;
+			return `${key}:s=${v.score.toFixed(2)}${v.shadow ? "(shadow)" : ""}`;
+		})
+		.join(",");
+}
+
 /**
  * Apply `policy.mode` to the raw complexity decision (#10).
  *
@@ -204,3 +341,5 @@ export function applyPolicy(
 	}
 	return decision;
 }
+
+export { binding };

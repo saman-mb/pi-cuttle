@@ -101,6 +101,42 @@ servers directly, so it cannot manage how many models your server keeps resident
 Configure that in the server itself (LM Studio's memory settings, llama.cpp router presets,
 etc.).
 
+## `gates` (phase 2, all off by default)
+
+Optional routing gates asked in the **same single forward pass** as the complexity
+question. They are designed to start in shadow mode: they record a verdict but do not
+change routing until you have evidence that they agree with live outcomes.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `delegate.enabled` | boolean | `false` | Ask whether this turn should be delegated to a subagent. |
+| `delegate.shadow` | boolean | `true` | When true, log only; never act on the delegate verdict. |
+| `delegate.threshold` | number 0–1 | `0.7` | Confidence required before the verdict is considered binding. |
+| `delegate.choices` | string[] | `["inline", "scout", "worker", "oracle", "driver"]` | Roles the classifier may pick when delegating. |
+| `role.enabled` | boolean | `false` | Ask which role this turn should play. |
+| `role.shadow` | boolean | `true` | When true, log only. |
+| `role.choices` | string[] | `["scout", "worker", "oracle", "driver"]` | Roles the classifier may assign. |
+| `judge.enabled` | boolean | `false` | After a subagent or tool returns, ask whether the result satisfied the request. |
+| `judge.shadow` | boolean | `true` | When true, log only. |
+| `judge.threshold` | number 0–1 | `0.7` | Confidence required before the verdict is considered binding. |
+| `struggle.enabled` | boolean | `false` | Predict whether the request is likely to cause struggle before any tool errors occur. |
+| `struggle.shadow` | boolean | `true` | When true, compare to the existing error-driven escalation rather than triggering it. |
+| `struggle.threshold` | number 0–1 | `0.7` | Confidence required before the verdict is considered binding. |
+
+When a gate is enabled, its verdict is appended to the decision reason and written to
+`~/.pi/agent/pi-cuttle/shadow.jsonl`. Use `/cuttle shadow-report [days]` to see how often
+each gate's prediction agreed with the actual routing outcome. Promote a gate out of
+shadow only after its agreement is consistently high.
+
+```json
+"gates": {
+  "delegate": { "enabled": true, "shadow": true, "choices": ["scout", "worker", "oracle"] },
+  "role": { "enabled": true, "shadow": true },
+  "judge": { "enabled": true, "shadow": true },
+  "struggle": { "enabled": true, "shadow": true }
+}
+```
+
 ## `telemetry`
 
 The decision ledger behind `/cuttle stats`. One JSONL line per assistant turn —

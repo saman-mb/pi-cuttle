@@ -18,7 +18,8 @@
 import type { Message } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ModelRoute, ModelRouteRequest } from "@earendil-works/pi-coding-agent";
 
-import { applyPolicy, decideTier, detectPhase, splitRef, struggleSignals } from "./classifier.ts";
+import { applyPolicy, decideTier, detectPhase, gatesActive, splitRef, struggleSignals } from "./classifier.ts";
+import { appendShadow } from "./shadow.ts";
 import type { LocalGovernor } from "./governor.ts";
 import type { ClassifierFailure, Reservation, RouterConfig, RouterFlavor, RouterState, Tier } from "./types.ts";
 import { VIRTUAL_PROVIDER } from "./types.ts";
@@ -343,7 +344,7 @@ export async function routeRequest(
 
 	const prompt = lastUserText(request.messages);
 	const forced = rt.getForced?.() ?? rt.pins.get(sessionId) ?? flavorBias(flavor);
-	const decided = await decideTier({ config: rt.config, prompt, ctx, log: rt.log, ...(forced ? { forced } : {}) });
+	const decided = await decideTier({ config: rt.config, prompt, messages: request.messages, ctx, log: rt.log, ...(forced ? { forced } : {}) });
 	if (decided.classifierFailure) {
 		rt.lastClassifierError = { ...decided.classifierFailure, turn: userTurn(request.messages), at: Date.now() };
 	} else if (decided.source === "classifier") {
@@ -384,6 +385,9 @@ export async function routeRequest(
 	}
 	if (!ref) throw new Error("pi-cuttle: no configured model resolves (check catalog.local/cloud)");
 	rt.log?.(`route result tier=${tier} ref=${ref} reasons=${reasons.join("; ")}`);
+	if (gatesActive(rt.config.gates)) {
+		appendShadow({ at: Date.now(), flavor, tier, source: decision.source, gates: decision.gates, reason: reasons.join("; ") });
+	}
 	const next: RouterState = {
 		tier,
 		modelId: ref ?? "",

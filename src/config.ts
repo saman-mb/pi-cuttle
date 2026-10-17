@@ -84,6 +84,7 @@ export function applyOverrides(config: RouterConfig, parsed: unknown): RouterCon
 		policy: mergePolicy(config.policy, parsed.policy),
 		local: mergeSection(config.local, parsed.local),
 		telemetry: mergeSection(config.telemetry, parsed.telemetry),
+		gates: mergeSection(config.gates ?? {}, parsed.gates),
 	};
 }
 
@@ -94,6 +95,16 @@ const DATA_DIR = join(homedir(), ".pi", "agent", "pi-cuttle");
 /** Path of the user config file the `/cuttle` command writes to. */
 export function userConfigPath(): string {
 	return join(homedir(), ".pi", "agent", "pi-cuttle.json");
+}
+
+/** Directory for router state (slots, ledgers, shadow logs). */
+export function dataDir(): string {
+	return DATA_DIR;
+}
+
+/** Path for the phase-2 shadow-mode gate ledger. */
+export function shadowLogPath(): string {
+	return join(DATA_DIR, "shadow.jsonl");
 }
 
 /**

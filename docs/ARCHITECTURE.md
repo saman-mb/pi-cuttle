@@ -62,6 +62,10 @@ or the `pi-subagents` package.
    `decideTier` returns a deterministic answer and records the failure in the reason.
 6. **No silent fallback.** A classifier failure is always visible in the decision reason,
    the debug log, and `/cuttle status`.
+7. **Gates are one forward pass.** Phase-2 gates (`delegate`, `role`, `judge`, `struggle`)
+   are asked alongside the complexity question in a single `ctx.modelRegistry.classify()`
+   call. They start in shadow mode and only affect routing after `/cuttle shadow-report`
+   proves agreement.
 
 ## Components
 
@@ -72,7 +76,8 @@ or the `pi-subagents` package.
 | `src/classifier.ts` | `decideTier`: classifier call via pi's registry, with heuristic fallback. |
 | `src/virtual-models.ts` | Register `cuttle/auto`, `cuttle/local`, `cuttle/cloud`, `cuttle/fast-local`; `route()` policy + spill. |
 | `src/telemetry.ts` | Decision ledger + `/cuttle stats` aggregation (metadata only). |
-| `src/commands.ts` | `/cuttle` command family (on/off, status, init, models, policy, limit, doctor, stats). |
+| `src/commands.ts` | `/cuttle` command family (on/off, status, init, models, policy, limit, doctor, stats, shadow-report). |
+| `src/shadow.ts` | Phase-2 shadow-mode gate ledger and `/cuttle shadow-report` aggregation. |
 | `src/index.ts` | Extension factory; wires the above; `message_end` release hook. |
 
 ## Evaluation
