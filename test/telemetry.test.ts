@@ -30,15 +30,22 @@ afterEach(() => {
 });
 
 function record(t: Telemetry, tier: "local" | "cloud", model: string, input: number, output: number): void {
-	const rec: DecisionRecord = { ts: Date.now(), provider: model.split("/")[0] ?? "", model: model.split("/").slice(1).join("/"), tier, inputTokens: input, outputTokens: output };
+	const rec: DecisionRecord = {
+		ts: Date.now(),
+		provider: model.split("/")[0] ?? "",
+		model: model.split("/").slice(1).join("/"),
+		tier,
+		inputTokens: input,
+		outputTokens: output,
+	};
 	t.record(rec);
 }
 
-test("isLocalModel matches bare ids, including HF-style slashes", () => {
+test("isLocalModel matches full provider/model refs", () => {
 	const t = new Telemetry(cfg, ["lmstudio/prism-ml/bonsai-27b", "ollama/qwen3:8b"]);
-	assert.equal(t.isLocalModel("prism-ml/bonsai-27b"), true);
-	assert.equal(t.isLocalModel("qwen3:8b"), true);
-	assert.equal(t.isLocalModel("deepseek-v4-flash"), false);
+	assert.equal(t.isLocalModel("lmstudio/prism-ml/bonsai-27b"), true);
+	assert.equal(t.isLocalModel("ollama/qwen3:8b"), true);
+	assert.equal(t.isLocalModel("opencode-go/deepseek-v4.1-flash"), false);
 });
 
 test("record + stats: counts, tokens, and per-model breakdown", () => {
@@ -57,11 +64,7 @@ test("record + stats: counts, tokens, and per-model breakdown", () => {
 
 test("pricing: savings = baseline cost of every turn minus what cloud turns actually cost", () => {
 	const t = new Telemetry(cfg, ["lmstudio/local-model"]);
-	// 1 local turn: baseline 1/5 per Mtok -> 1k*1 + 0.2k*5 = 0.002 USD, actual 0
 	record(t, "local", "lmstudio/local-model", 1_000, 200);
-	// 1 cloud/big turn: baseline 0.005 USD... compute: 5k*1 + 1k*5 = 10 -> /1e6 = 0.00001*1000 ...
-	// 5k input * $1/Mtok = $0.005; 1k output * $5/Mtok = $0.005 => baseline $0.010
-	// actual on cloud/big: 5k*3 + 1k*15 = 15k+15k = 30e3 / 1e6 = $0.030
 	record(t, "cloud", "cloud/big", 5_000, 1_000);
 	const stats = t.stats(7);
 	assert.equal(stats.pricingComplete, true);
@@ -93,8 +96,6 @@ test("a window with no records reports nothing to show", () => {
 });
 
 test("a turn attributed to the virtual provider is not recorded (#62)", () => {
-	// Routing that resolves no target comes back as provider "cuttle" with the virtual model id
-	// and no usage. Counting it as a cloud turn deflates the local share and the savings figure.
 	assert.equal(isPhysicalTurn({ provider: "cuttle", model: "auto" }), false);
 	assert.equal(isPhysicalTurn({ provider: undefined, model: "auto" }), false);
 	assert.equal(isPhysicalTurn({ provider: "", model: "auto" }), false);

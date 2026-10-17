@@ -1,8 +1,9 @@
 /**
  * pi-cuttle — extension entry point.
  *
- * Registers the `cuttle/*` virtual-model family, the `/cuttle` command, the
- * session-start auto-selection, and the slot-release hook.
+ * Registers the `cuttle/*` virtual-model family, the `/cuttle` command, and the
+ * session-start auto-selection. All models come from pi's own registry; the router
+ * never hard-codes a local serving tool or talks to one directly.
  *
  * Delivery notes proven by the spikes (docs/ARCHITECTURE.md):
  *   - #24: `defaultModel` does NOT resolve an extension virtual model. "By default" is
@@ -18,8 +19,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { appendFileSync } from "node:fs";
 
 import { loadConfig } from "./config.ts";
-import { isLocalProvider, splitRef } from "./classifier.ts";
-import { createHost } from "./host.ts";
+import { splitRef } from "./classifier.ts";
 import { LocalGovernor } from "./governor.ts";
 import { registerCuttleCommand } from "./commands.ts";
 import { Telemetry, isPhysicalTurn } from "./telemetry.ts";
@@ -46,30 +46,20 @@ export default function modelRouter(pi: ExtensionAPI): void {
 	const debugPath = process.env.PI_CUTTLE_DEBUG;
 	const log = debugPath ? (message: string) => appendFileSync(debugPath, message + "\n") : undefined;
 	log?.(`factory cwd=${process.cwd()} autoSelect=${loaded.config.autoSelect} local=${loaded.config.catalog.local.join(",")} cloud=${loaded.config.catalog.cloud.join(",")} sources=${loaded.sources.join("|")} warnings=${loaded.warnings.join(";")}`);
-	const host = createHost(loaded.config);
-	const governor = new LocalGovernor(loaded.config.local, host);
+	const governor = new LocalGovernor(loaded.config.local);
 	const telemetry = new Telemetry(loaded.config.telemetry, loaded.config.catalog.local);
 
 	const rt: RouterRuntime = {
 		config: loaded.config,
-		host,
 		governor,
 		pins: new Map(),
+		previousModels: new Map(),
 		sizes: new Map(),
 		log,
 		// #26: read lazily; the value is undefined inside the factory.
 		getForced: () => {
 			const value = pi.getFlag("cuttle-force");
 			return value === "local" || value === "cloud" ? (value as Tier) : undefined;
-		},
-		refreshSizes: async () => {
-			try {
-				for (const model of await host.list()) {
-					if (typeof model.size_bytes === "number") rt.sizes.set(model.key, model.size_bytes);
-				}
-			} catch {
-				/* host offline; fast-local falls back to config order */
-			}
 		},
 	};
 
@@ -78,28 +68,7 @@ export default function modelRouter(pi: ExtensionAPI): void {
 	registerVirtualModels(pi, rt);
 	registerCuttleCommand(pi, rt, loaded, telemetry);
 
-	// #44: pin the local classifier against ceiling eviction and warm the local model
-	// while the user types their first prompt. Both are fire-and-forget so session start
-	// is never blocked by a model load.
 	pi.on("session_start", async (_event, ctx) => {
-		void rt.refreshSizes?.();
-		const classifierRef = rt.config.classifier.model;
-		const classifierParsed = classifierRef ? splitRef(classifierRef) : undefined;
-		if (classifierParsed && isLocalProvider(classifierParsed.provider) && rt.config.local.pinClassifier) {
-			governor.pin(classifierParsed.id);
-			log?.(`session_start pinned classifier ${classifierParsed.id}`);
-		}
-		if (rt.config.local.preload && host.capabilities.canLoadUnload) {
-			const warmTarget = rt.config.catalog.local[0];
-			for (const ref of [classifierRef, warmTarget]) {
-				const key = ref ? splitRef(ref)?.id : undefined;
-				if (!key) continue;
-				void host.load(key).then(
-					() => log?.(`preload ok ${key}`),
-					(error) => log?.(`preload failed ${key}: ${error instanceof Error ? error.message : String(error)}`),
-				);
-			}
-		}
 		log?.(`session_start autoSelect=${rt.config.autoSelect} explicit=${explicitModelRequested(process.argv)} current=${ctx.model?.provider}/${ctx.model?.id}`);
 		if (!rt.config.autoSelect) return;
 		if (explicitModelRequested(process.argv)) return;
@@ -108,6 +77,10 @@ export default function modelRouter(pi: ExtensionAPI): void {
 			log?.("session_start no catalog configured, leaving model unchanged");
 			return;
 		}
+		const currentRef = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
+		if (currentRef && !currentRef.startsWith(`${VIRTUAL_PROVIDER}/`)) {
+			rt.previousModels.set(ctx.sessionManager.getSessionId(), currentRef);
+		}
 		const model = ctx.modelRegistry.find(VIRTUAL_PROVIDER, "auto");
 		log?.(`session_start selecting cuttle/auto found=${!!model}`);
 		if (model) await pi.setModel(model);
@@ -115,9 +88,8 @@ export default function modelRouter(pi: ExtensionAPI): void {
 
 	// #25: exactly one message_end per assistant message, so this releases exactly once.
 	// #38: release for ANY provider. Slots are keyed by model id and only ever exist for
-	// local models, so a cloud message is a harmless no-op; the old `provider === "lmstudio"`
-	// guard leaked slots for ollama/llama.cpp-served local models.
-	// #42: the same hook writes the decision ledger — metadata only, best-effort.
+	// local models, so a cloud message is a harmless no-op.
+	// #62: the same hook writes the decision ledger — metadata only, best-effort.
 	pi.on("message_end", (event, ctx) => {
 		const message = event.message as {
 			role?: string;
@@ -129,15 +101,14 @@ export default function modelRouter(pi: ExtensionAPI): void {
 		governor.releaseOne(message.model);
 		// #62: a message the provider layer attributes to the virtual provider means routing never
 		// resolved a physical model — nothing ran, nothing was spent. Recording it as a cloud turn
-		// (which is what the local/cloud fallback does with the id `auto`) quietly deflates both the
-		// local share and the savings figure /cuttle stats reports.
+		// would quietly deflates both the local share and the savings figure /cuttle stats reports.
 		if (!isPhysicalTurn(message)) return;
 		telemetry.record({
 			ts: Date.now(),
 			...(safeSessionId(ctx) ? { sessionId: safeSessionId(ctx)! } : {}),
 			provider: message.provider ?? "",
 			model: message.model,
-			tier: telemetry.isLocalModel(message.model) ? "local" : "cloud",
+			tier: telemetry.isLocalModel(`${message.provider}/${message.model}`) ? "local" : "cloud",
 			inputTokens: message.usage?.input ?? 0,
 			outputTokens: message.usage?.output ?? 0,
 			...(message.usage?.cacheRead !== undefined ? { cacheReadTokens: message.usage.cacheRead } : {}),

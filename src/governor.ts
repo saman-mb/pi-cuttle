@@ -14,7 +14,6 @@ import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
-import type { LocalHost } from "./host.ts";
 import type { GovernorStatus, LocalConfig, Reservation } from "./types.ts";
 
 function pidAlive(pid: number): boolean {
@@ -39,22 +38,13 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Earliest TTL among a model's instances; models without a TTL sort last. */
-function minTtl(model: { instances: { remaining_ttl_seconds?: number }[] }): number {
-	return Math.min(...model.instances.map((i) => i.remaining_ttl_seconds ?? Number.POSITIVE_INFINITY));
-}
-
 export class LocalGovernor {
 	/** Reservations this process holds, grouped by model. */
 	private readonly held = new Map<string, Reservation[]>();
 	private readonly cfg: LocalConfig;
-	private readonly host: LocalHost;
-	/** Models the ceiling must never evict (e.g. the local classifier, #44). */
-	private readonly pinned = new Set<string>();
 
-	constructor(cfg: LocalConfig, host: LocalHost) {
+	constructor(cfg: LocalConfig) {
 		this.cfg = cfg;
-		this.host = host;
 		try {
 			mkdirSync(cfg.slotDir, { recursive: true });
 		} catch {
@@ -111,23 +101,9 @@ export class LocalGovernor {
 			const overConcurrency =
 				overFlavor || perModel >= this.cfg.maxConcurrentPerModel || slots.length >= this.cfg.maxConcurrent;
 
-			const loaded = await this.loadedKeys();
-			const overLoaded =
-				this.cfg.maxLoadedModels > 0 && !loaded.has(modelKey) && loaded.size >= this.cfg.maxLoadedModels;
-
-			if (!overConcurrency && !overLoaded) return this.reserve(modelKey, opts.sessionId, opts.flavor);
+			if (!overConcurrency) return this.reserve(modelKey, opts.sessionId, opts.flavor);
 			if (Date.now() >= deadline) return null;
 			await sleep(Math.min(250, Math.max(0, deadline - Date.now())));
-		}
-	}
-
-	private async loadedKeys(): Promise<Set<string>> {
-		if (!this.host.capabilities.canListLoaded) return new Set();
-		try {
-			return new Set((await this.host.loaded()).map((m) => m.key));
-		} catch {
-			// Host unreachable: fall back to slot accounting alone.
-			return new Set();
 		}
 	}
 
@@ -170,19 +146,6 @@ export class LocalGovernor {
 		if (index >= 0) list.splice(index, 1);
 	}
 
-	/** Protect a model key from ceiling eviction (#44). */
-	pin(modelKey: string): void {
-		if (modelKey) this.pinned.add(modelKey);
-	}
-
-	unpin(modelKey: string): void {
-		this.pinned.delete(modelKey);
-	}
-
-	isPinned(modelKey: string): boolean {
-		return this.pinned.has(modelKey);
-	}
-
 	/** Release everything this process holds. Call on shutdown. */
 	releaseAll(): void {
 		for (const list of this.held.values()) for (const res of list) safeUnlink(res.file);
@@ -190,59 +153,9 @@ export class LocalGovernor {
 	}
 
 	async status(): Promise<GovernorStatus> {
-		let loadedModels: GovernorStatus["loadedModels"] = [];
-		try {
-			loadedModels = this.host.capabilities.canListLoaded ? await this.host.loaded() : [];
-		} catch {
-			/* offline is a valid status */
-		}
 		return {
 			slots: this.live(),
 			localMax: this.cfg.maxConcurrent,
-			loadedModels,
-			capabilities: this.host.capabilities,
-			pinnedKeys: [...this.pinned],
 		};
-	}
-
-	/**
-	 * Bring LM Studio back under `maxLoadedModels` by unloading the instances closest to
-	 * TTL expiry, never the model we are about to use (#14). TTL itself is server-side (#27).
-	 */
-	async enforceLoadedCeiling(keepKey?: string): Promise<string[]> {
-		if (this.cfg.maxLoadedModels <= 0) return [];
-		if (!this.host.capabilities.canLoadUnload) return [];
-		let loaded: { key: string; instances: { id: string; remaining_ttl_seconds?: number }[] }[];
-		try {
-			loaded = await this.host.loaded();
-		} catch {
-			return [];
-		}
-		// Pinned models (the classifier) are never victims; the ceiling is best-effort
-		// around them, because evicting the classifier just forces a reload next turn.
-		const others = loaded.filter((m) => m.key !== keepKey && !this.pinned.has(m.key));
-		// The target needs a slot of its own, so leave room for it whether or not it is
-		// currently loaded. Without keepKey this is a plain ceiling on everything loaded.
-		const allowedOthers = keepKey ? Math.max(0, this.cfg.maxLoadedModels - 1) : this.cfg.maxLoadedModels;
-		if (others.length <= allowedOthers) return [];
-		// Evict whole models, closest to TTL first. A model may have several instances
-		// (LM Studio JIT-loads one per concurrent request); unloading one instance does not
-		// free the model, so every instance of a chosen victim must go.
-		const ordered = [...others].sort((a, b) => minTtl(a) - minTtl(b));
-		const unloaded: string[] = [];
-		let remaining = others.length;
-		for (const victim of ordered) {
-			if (remaining <= allowedOthers) break;
-			for (const instance of victim.instances) {
-				try {
-					await this.host.unload(instance.id);
-				} catch {
-					/* keep going; a failed unload is caught by the acquire() ceiling check */
-				}
-			}
-			unloaded.push(victim.key);
-			remaining -= 1;
-		}
-		return unloaded;
 	}
 }

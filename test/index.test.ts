@@ -43,6 +43,7 @@ function createMockPI(): MockPI {
 function createContext(model?: { provider: string; id: string }): ExtensionContext {
 	return {
 		model,
+		sessionManager: { getSessionId: () => "s1" },
 		modelRegistry: {
 			find: (provider: string, id: string) => {
 				if (provider === "cuttle" && id === "auto") {
@@ -59,7 +60,7 @@ async function withTempConfig(config: Record<string, unknown>, fn: () => void | 
 	const configDir = join(dir, ".pi");
 	const originalCwd = process.cwd();
 	mkdirSync(configDir);
-	writeFileSync(join(configDir, "cuttle.json"), JSON.stringify(config));
+	writeFileSync(join(configDir, "pi-cuttle.json"), JSON.stringify(config));
 	process.chdir(dir);
 	try {
 		await fn();

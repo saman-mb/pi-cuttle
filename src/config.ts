@@ -3,19 +3,18 @@
  *
  * pi has no extension settings-contribution API, so the router owns this file.
  * `pi.getSettings()` is available for reading pi's own settings, but our schema
- * lives in `cuttle.json` and is read directly.
+ * lives in `pi-cuttle.json` and is read directly.
  *
- * Precedence: project `.pi/cuttle.json` over user `~/.pi/agent/cuttle.json`
+ * Precedence: project `.pi/pi-cuttle.json` over user `~/.pi/agent/pi-cuttle.json`
  * over DEFAULTS. Merge is shallow per top-level section.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-import type { HostCapabilities, RouterConfig } from "./types.ts";
+import type { RouterConfig } from "./types.ts";
 
 export const DEFAULTS: RouterConfig = {
-	host: "lmstudio",
 	autoSelect: false,
 	classifier: { fallback: "heuristic", timeoutMs: 4000, stateChars: 16_000 },
 	catalog: { local: [], cloud: [] },
@@ -29,19 +28,12 @@ export const DEFAULTS: RouterConfig = {
 	local: {
 		maxConcurrent: 1,
 		maxConcurrentPerModel: 1,
-		maxLoadedModels: 1,
 		onFull: "spill",
 		waitMs: 20_000,
-		idleUnloadMs: 300_000,
-		preload: true,
-		pinClassifier: true,
-		slotDir: join(homedir(), ".pi", "agent", "cuttle", "slots"),
+		slotDir: join(homedir(), ".pi", "agent", "pi-cuttle", "slots"),
 		staleSlotMs: 300_000,
 	},
-	telemetry: { enabled: true, path: join(homedir(), ".pi", "agent", "cuttle", "decisions.jsonl"), pricing: {} },
-	lmstudio: { baseUrl: "http://localhost:1235", timeoutMs: 8_000 },
-	ollama: { baseUrl: "http://localhost:11434", timeoutMs: 8_000 },
-	openai: { baseUrl: "http://localhost:8080", timeoutMs: 8_000 },
+	telemetry: { enabled: true, path: join(homedir(), ".pi", "agent", "pi-cuttle", "decisions.jsonl"), pricing: {} },
 };
 
 export interface LoadedConfig {
@@ -58,7 +50,7 @@ export function expandHome(p: string): string {
 }
 
 export function configPaths(cwd: string): string[] {
-	return [join(homedir(), ".pi", "agent", "cuttle.json"), join(cwd, ".pi", "cuttle.json")];
+	return [join(homedir(), ".pi", "agent", "pi-cuttle.json"), join(cwd, ".pi", "pi-cuttle.json")];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -85,23 +77,52 @@ function mergePolicy(base: RouterConfig["policy"], patch: unknown): RouterConfig
 /** Apply one parsed JSON object over a config, section by section. Exported for tests. */
 export function applyOverrides(config: RouterConfig, parsed: unknown): RouterConfig {
 	if (!isRecord(parsed)) return config;
-	const host =
-		parsed.host === "lmstudio" || parsed.host === "ollama" || parsed.host === "openai" ? parsed.host : config.host;
 	return {
-		host,
 		autoSelect: typeof parsed.autoSelect === "boolean" ? parsed.autoSelect : config.autoSelect,
 		classifier: mergeSection(config.classifier, parsed.classifier),
 		catalog: mergeSection(config.catalog, parsed.catalog),
 		policy: mergePolicy(config.policy, parsed.policy),
 		local: mergeSection(config.local, parsed.local),
 		telemetry: mergeSection(config.telemetry, parsed.telemetry),
-		lmstudio: mergeSection(config.lmstudio, parsed.lmstudio),
-		ollama: mergeSection(config.ollama, parsed.ollama),
-		openai: mergeSection(config.openai, parsed.openai),
 	};
 }
 
+const LEGACY_CONFIG_PATH = join(homedir(), ".pi", "agent", "cuttle.json");
+const LEGACY_DATA_DIR = join(homedir(), ".pi", "agent", "cuttle");
+const DATA_DIR = join(homedir(), ".pi", "agent", "pi-cuttle");
+
+/** Path of the user config file the `/cuttle` command writes to. */
+export function userConfigPath(): string {
+	return join(homedir(), ".pi", "agent", "pi-cuttle.json");
+}
+
+/**
+ * One-time migration of pre-rename state. If the old `cuttle.json` or `cuttle/`
+ * directory exists and the new `pi-cuttle` equivalent does not, move it. This
+ * preserves existing slots, ledger, and user settings without leaving stale data
+ * behind.
+ */
+function migrateLegacyPaths(): void {
+	if (existsSync(LEGACY_CONFIG_PATH) && !existsSync(userConfigPath())) {
+		try {
+			mkdirSync(dirname(userConfigPath()), { recursive: true });
+			renameSync(LEGACY_CONFIG_PATH, userConfigPath());
+		} catch {
+			/* migration is best-effort; loadConfig will fall back if it can */
+		}
+	}
+	if (existsSync(LEGACY_DATA_DIR) && !existsSync(DATA_DIR)) {
+		try {
+			renameSync(LEGACY_DATA_DIR, DATA_DIR);
+		} catch {
+			/* best-effort */
+		}
+	}
+}
+
 export function loadConfig(cwd: string): LoadedConfig {
+	migrateLegacyPaths();
+
 	const sources: string[] = [];
 	const warnings: string[] = [];
 	let config: RouterConfig = structuredClone(DEFAULTS);
@@ -119,27 +140,16 @@ export function loadConfig(cwd: string): LoadedConfig {
 			warnings.push(`${path}: expected a JSON object`);
 			continue;
 		}
-		if ("host" in parsed && !["lmstudio", "ollama", "openai"].includes(parsed.host as string)) {
-			warnings.push(`${path}: unknown host '${String(parsed.host)}', expected lmstudio|ollama|openai`);
-		}
 		config = applyOverrides(config, parsed);
 		sources.push(resolve(path));	}
 
 	config.local.slotDir = resolve(expandHome(config.local.slotDir));
 	config.telemetry.path = resolve(expandHome(config.telemetry.path));
-	config.lmstudio.baseUrl = config.lmstudio.baseUrl.replace(/\/+$/, "");
-	config.ollama.baseUrl = config.ollama.baseUrl.replace(/\/+$/, "");
-	config.openai.baseUrl = config.openai.baseUrl.replace(/\/+$/, "");
 
 	if (config.catalog.local.length === 0 && config.catalog.cloud.length === 0) {
-		warnings.push("no models configured: set catalog.local and catalog.cloud in cuttle.json");
+		warnings.push("no models configured: set catalog.local and catalog.cloud in pi-cuttle.json");
 	}
 	return { config, sources, warnings };
-}
-
-/** Path of the user config file the `/cuttle` command writes to. */
-export function userConfigPath(): string {
-	return join(homedir(), ".pi", "agent", "cuttle.json");
 }
 
 /**

@@ -1,7 +1,3 @@
-import type { HostCapabilities } from "./host.ts";
-
-export type { HostCapabilities } from "./host.ts";
-
 /**
  * Shared types for pi-cuttle.
  *
@@ -24,11 +20,8 @@ export type Tier = "local" | "cloud";
 /** Which of the registered virtual models is being selected. */
 export type RouterFlavor = "auto" | "local" | "cloud" | "fast-local";
 
-/** Which local-inference host serves local models. */
-export type HostKind = "lmstudio" | "ollama" | "openai";
-
 export interface ClassifierConfig {
-	/** `provider/model` of the decision model. Local or cloud; both are valid. */
+	/** `provider/model` of the decision model. Discovered from pi's model registry. */
 	model?: string;
 	/** What to do when the classifier is unavailable or times out. */
 	fallback: "heuristic" | Tier;
@@ -77,18 +70,10 @@ export interface LocalConfig {
 	maxConcurrentPerModel: number;
 	/** Optional per-virtual-model concurrency budgets (e.g. { "local": 1, "fast-local": 1 }). */
 	maxConcurrentByFlavor?: Record<string, number>;
-	/** Cooperative ceiling on models loaded in LM Studio at once. */
-	maxLoadedModels: number;
 	/** What to do when the local side is saturated. */
 	onFull: "spill" | "wait";
 	/** How long `wait` polls before giving up and spilling. */
 	waitMs: number;
-	/** Ask LM Studio to unload idle instances after this long. 0 disables. */
-	idleUnloadMs: number;
-	/** Warm the local target model at session start so turn one is not cold (#44). */
-	preload: boolean;
-	/** Never evict the local classifier under the loaded ceiling (#44). */
-	pinClassifier: boolean;
 	/** Directory holding the cross-process slot files. `~` is expanded. */
 	slotDir: string;
 	/** A slot older than this is considered abandoned and reaped. */
@@ -106,35 +91,14 @@ export interface TelemetryConfig {
 	baseline?: string;
 }
 
-export interface LmStudioConfig {
-	baseUrl: string;
-	apiToken?: string;
-	timeoutMs: number;
-}
-
-export interface OllamaConfig {
-	baseUrl: string;
-	timeoutMs: number;
-}
-
-export interface OpenAiConfig {
-	baseUrl: string;
-	apiKey?: string;
-	timeoutMs: number;
-}
-
 export interface RouterConfig {
-	/** Which local host serves local models (and the local classifier). */
-	host: HostKind;
+	/** When true, new sessions start on `cuttle/auto` and routing is active. */
 	autoSelect: boolean;
 	classifier: ClassifierConfig;
 	catalog: CatalogConfig;
 	policy: PolicyConfig;
 	local: LocalConfig;
 	telemetry: TelemetryConfig;
-	lmstudio: LmStudioConfig;
-	ollama: OllamaConfig;
-	openai: OpenAiConfig;
 }
 
 /** Router state persisted on the session branch by pi. Must be JSON-serializable. */
@@ -190,34 +154,7 @@ export interface Reservation {
 	flavor?: string;
 }
 
-export interface LoadedInstance {
-	id: string;
-	config?: {
-		context_length?: number;
-		parallel?: number;
-		/** LM Studio's per-forward-pass token limit for decision models (#50). Read-only over REST. */
-		physical_batch_size?: number;
-		/** Reported alongside `physical_batch_size`; not the per-pass limit. */
-		eval_batch_size?: number;
-	};
-	remaining_ttl_seconds?: number;
-}
-
-export interface LmModel {
-	key: string;
-	type?: string;
-	state?: string;
-	size_bytes?: number;
-	max_context_length?: number;
-	loaded_instances?: LoadedInstance[];
-}
-
 export interface GovernorStatus {
 	slots: Reservation[];
 	localMax: number;
-	/** Model keys protected from ceiling eviction. */
-	pinnedKeys: string[];
-	loadedModels: { key: string; instances: LoadedInstance[] }[];
-	/** What the configured host can do; degraded hosts report fewer capabilities. */
-	capabilities: HostCapabilities;
 }

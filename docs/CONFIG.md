@@ -1,76 +1,64 @@
 # Configuration
 
-`pi-cuttle` reads `cuttle.json` from:
+`pi-cuttle` reads `pi-cuttle.json` from:
 
-1. `~/.pi/agent/cuttle.json` (user)
-2. `<cwd>/.pi/cuttle.json` (project, overrides user)
+1. `~/.pi/agent/pi-cuttle.json` (user)
+2. `<cwd>/.pi/pi-cuttle.json` (project, overrides user)
 
 Merge is per top-level section: a project file that sets only `local` leaves the
 user's `classifier`, `catalog`, and `policy` intact. Missing file means defaults.
-Worked example: [`examples/cuttle.example.json`](../examples/cuttle.example.json).
+Worked example: [`examples/pi-cuttle.example.json`](../examples/pi-cuttle.example.json).
 
-## `host`
+> Legacy: an existing `~/.pi/agent/cuttle.json` and `~/.pi/agent/cuttle/` directory are
+> moved to the new `pi-cuttle` names automatically on first load.
 
-Which local-inference server serves `catalog.local` and a local `classifier.model`.
+## Model refs
 
-The router talks to the *native management API* of the host, not just its
-OpenAI-compatible endpoint, because the memory governor needs to know what is
-loaded and to evict under a ceiling. Hosts differ in what they expose, and the
-router degrades explicitly per capability instead of assuming:
-
-| Host | `host` | Inventory | Loaded list | Load/unload | Model sizes | Decision models |
-|---|---|---|---|---|---|---|
-| LM Studio | `lmstudio` | ✅ | ✅ | ✅ | ✅ | ✅ System One |
-| ollama | `ollama` | ✅ | ✅ `/api/ps` | ✅ `keep_alive` | ✅ | ✖ (chat prompt instead) |
-| llama.cpp, vLLM, other OpenAI-compatible | `openai` | ✅ | ✖ | ✖ | ✖ | ✖ |
-
-On a host without loaded-model introspection the governor still caps concurrency
-cross-process via slot files (the invariant that matters); it simply cannot
-cooperate with the host's own memory policy. `maxLoadedModels` and
-`cuttle/fast-local` size ordering apply only where the host supports them.
-
-See the per-host sections below for URLs and tokens.
+Every model ref is `provider/model` as pi's model registry understands it. The
+`provider` is whatever pi lists — `llama.cpp`, `mtplx`, `lmstudio`, `ollama`,
+`opencode-go`, etc. Use `pi --list-models` to check. The `model` part may contain
+slashes (`llama.cpp/ggml-org/Kev-9B-GGUF:Q8_0`).
 
 ## `classifier`
 
-The decision model. May be local or cloud.
+The decision model. Must be a classifier pi can resolve via `ctx.modelRegistry`.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `model` | string | unset | `provider/model`. A ref whose provider is a local host (`lmstudio/…`, `ollama/…`, `openai/…`) is called over local HTTP for free; anything else is resolved as a pi classifier via `ctx.modelRegistry`. |
+| `model` | string | unset | `provider/model` of the classifier. Examples: `llama.cpp/ggml-org/Kev-9B-GGUF:Q8_0`, `opencode-go/some-classifier`. |
 | `fallback` | `"heuristic"` \| `"local"` \| `"cloud"` | `"heuristic"` | What to use when the classifier is unavailable or times out. |
 | `timeoutMs` | number | `4000` | Classifier timeout before falling back. |
-| `stateChars` | number | `16000` | Characters of the prompt handed to the classifier. A decision model trims this to its physical batch — see below. |
+| `stateChars` | number | `16000` | Characters of the prompt handed to the classifier. |
 
-Example: `{ "model": "lmstudio/vllm-d3-nano", "fallback": "heuristic" }`.
+Example: `{ "model": "llama.cpp/ggml-org/Kev-9B-GGUF:Q8_0", "fallback": "heuristic" }`.
 
-The model part must be an exact `key` from LM Studio's `GET /api/v1/models` catalog (not a
-display name). `/cuttle doctor` checks that it is in the catalog, answers a trivial probe, and
-reports the character budget a decision model's prompt is trimmed to. Decision models run the
-whole prompt as a single physical batch (default 512 tokens), so for those the effective size
-is the *smaller* of `stateChars` and the batch budget; a prompt over the budget is retried once
-at half size before falling back.
-
+`/cuttle doctor` checks that the classifier resolves and answers a trivial probe.
 Set `PI_CUTTLE_DEBUG` to a file path to log each routing decision and any classifier
-trim or failure there. The router is otherwise silent, so this is the only turn-level record
-that the classifier fell back to the heuristic.
+failure. The router is otherwise silent, so this is the only turn-level record that the
+classifier fell back to the heuristic.
 
 ## `catalog`
 
 Ordered candidate lists, tried in order. The first entry is preferred; if it is
 missing from the model registry, over its context window, or out of slots, the next
-resolvable candidate is used before spilling to cloud (#45). When the cloud catalog
+resolvable candidate is used before spilling to cloud. When the cloud catalog
 resolves nothing, the turn falls back to a local candidate rather than failing; only
 when nothing at all resolves does routing raise a clear error. `cuttle/fast-local`
-orders local candidates by on-disk size when the host reports it (LM Studio, ollama).
+orders local candidates by a configured size map if one is supplied; otherwise it keeps
+catalog order.
 
 | Field | Type | Default |
 |---|---|---|
 | `local` | string[] | `[]` |
 | `cloud` | string[] | `[]` |
 
-Refs are `provider/model`; the model part may contain slashes
-(`lmstudio/deepseek/deepseek-v4-flash`).
+### Model selection by complexity
+
+When the classifier returns a complexity score, the router uses each candidate's
+context window (read from pi's model registry) as a capacity proxy. Within the chosen
+tier it picks the smallest model whose capacity is at least the complexity score. If no
+candidate reaches the score, it picks the largest. This keeps cheap/small models on easy
+work without hard-coding capacities.
 
 ## `policy`
 
@@ -95,28 +83,23 @@ next user turn, because the cause was the environment, not the work.
 
 ## `local`
 
-Memory governance. See [ARCHITECTURE.md](ARCHITECTURE.md) for why this is filesystem-based.
+Cross-process concurrency governance. See [ARCHITECTURE.md](ARCHITECTURE.md) for why this
+is filesystem-based.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `maxConcurrent` | number | `1` | Max concurrent local requests across all pi processes. |
 | `maxConcurrentPerModel` | number | `1` | Max concurrent requests per local model. |
-| `maxLoadedModels` | number | `1` | Cooperative ceiling on models loaded in the host (where the host reports loaded state and supports unload). |
+| `maxConcurrentByFlavor` | object | unset | Per-virtual-model budgets, e.g. `{ "local": 1, "fast-local": 1 }`. |
 | `onFull` | `"spill"` \| `"wait"` | `"spill"` | Route to cloud immediately, or wait for a slot. |
 | `waitMs` | number | `20000` | Wait budget before spilling when `onFull: "wait"`. |
-| `idleUnloadMs` | number | `300000` | Reserved; LM Studio owns the TTL (see #27). |
-| `preload` | boolean | `true` | Warm the local model (and local classifier) at session start, fire-and-forget, so turn one is not a cold JIT load. |
-| `pinClassifier` | boolean | `true` | Protect the local classifier from `maxLoadedModels` eviction — evicting it just forces a reload next turn. |
-| `slotDir` | string | `~/.pi/agent/cuttle/slots` | Where slot files live. `~` expands. |
+| `slotDir` | string | `~/.pi/agent/pi-cuttle/slots` | Where slot files live. `~` expands. |
 | `staleSlotMs` | number | `300000` | A slot older than this is reaped. |
 
-**Local classifier:** if `classifier.model` is served by the local host, set
-`maxLoadedModels` to **at least 2**. At `1` the classifier and the target model
-evict each other every turn — the classifier is unloaded to make room for the
-target, then reloaded for the next decision. When the ceiling is reached and the
-target is not loaded, the governor unloads other models (all instances of them) to
-free a slot; `/cuttle doctor` warns when this is misconfigured. This applies to
-hosts that report loaded state (LM Studio, ollama).
+This cap counts **in-flight turns**, not loaded models. pi-cuttle no longer talks to local
+servers directly, so it cannot manage how many models your server keeps resident in memory.
+Configure that in the server itself (LM Studio's memory settings, llama.cpp router presets,
+etc.).
 
 ## `telemetry`
 
@@ -127,7 +110,7 @@ written.
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `enabled` | boolean | `true` | Record decisions and enable `/cuttle stats`. |
-| `path` | string | `~/.pi/agent/cuttle/decisions.jsonl` | Ledger file. `~` expands. |
+| `path` | string | `~/.pi/agent/pi-cuttle/decisions.jsonl` | Ledger file. `~` expands. |
 | `pricing` | object | `{}` | USD per million tokens, keyed by `provider/model`: `{ "input": 3, "output": 15 }`. |
 | `baseline` | string | unset | Model ref the all-cloud baseline is priced at; usually `catalog.cloud[0]`. |
 
@@ -143,29 +126,11 @@ Missing prices degrade to counts rather than inventing numbers.
 }
 ```
 
-## `lmstudio`, `ollama`, `openai`
-
-Connection settings per host; only the one named by `host` is used.
-
-| Section | Field | Default |
-|---|---|---|
-| `lmstudio` | `baseUrl` | `http://localhost:1235` |
-| | `apiToken` | unset |
-| `ollama` | `baseUrl` | `http://localhost:11434` |
-| `openai` | `baseUrl` | `http://localhost:8080` (llama.cpp default) |
-| | `apiKey` | unset |
-
-Every section also accepts `timeoutMs` (default `8000`).
-
-```json
-{ "host": "ollama", "catalog": { "local": ["ollama/qwen3:8b"] } }
-```
-
 ## Precedence summary
 
 ```
-project .pi/cuttle.json
-  > user ~/.pi/agent/cuttle.json
+project .pi/pi-cuttle.json
+  > user ~/.pi/agent/pi-cuttle.json
     > built-in DEFAULTS
 ```
 

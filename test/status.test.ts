@@ -9,18 +9,15 @@ import type { RouterRuntime } from "../src/virtual-models.ts";
 function runtimeWith(overrides: Partial<RouterRuntime> = {}): RouterRuntime {
 	const config: RouterConfig = {
 		...structuredClone(DEFAULTS),
-		classifier: { ...DEFAULTS.classifier, model: "lmstudio/decision-x" },
-		catalog: { local: ["lmstudio/local-a"], cloud: ["cloud/big"] },
+		classifier: { ...DEFAULTS.classifier, model: "llama.cpp/decision-x" },
+		catalog: { local: ["llama.cpp/local-a"], cloud: ["cloud/big"] },
 	};
-	return { config, pins: new Map(), sizes: new Map(), ...overrides } as unknown as RouterRuntime;
+	return { config, pins: new Map(), previousModels: new Map(), sizes: new Map(), ...overrides } as unknown as RouterRuntime;
 }
 
 const GOVERNOR: GovernorStatus = {
 	slots: [],
 	localMax: 1,
-	loadedModels: [],
-	pinnedKeys: [],
-	capabilities: { canListLoaded: true, canLoadUnload: true, hasDecisionModels: true, hasModelSizes: true },
 };
 
 function render(rt: RouterRuntime): string[] {
