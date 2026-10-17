@@ -69,8 +69,9 @@ lmstudio/… (free)        cloud/… (metered)
 ```
 
 1. **Virtual models** (`pi.registerVirtualModel`) select a physical model per request.
-2. **`session_start` selects `cuttle/auto`** — this is how routing becomes the default,
+2. **`session_start` can select `cuttle/auto`** — this is how automatic routing is enabled,
    because `defaultModel` does not resolve an extension virtual model (see spike #24).
+   `autoSelect` defaults to `false`; set it to `true` in `cuttle.json` to opt in.
 3. **Router state** lives on the session branch and survives compaction and forks.
 4. **`route()` talks to LM Studio over plain HTTP**, never through another extension's
    hooks, because foreground subagent children do not reload ambient extensions.
@@ -105,7 +106,7 @@ A single file, `~/.pi/agent/cuttle.json` (project `.pi/cuttle.json` overrides):
 ```json
 {
   "host": "lmstudio",
-  "autoSelect": true,
+  "autoSelect": true,  // opt in; default is false so installs never hijack the session
   "classifier": { "model": "lmstudio/vllm-d3-nano", "fallback": "heuristic" },
   "catalog": {
     "local": ["lmstudio/prism-ml/bonsai-27b"],
@@ -135,7 +136,7 @@ Set `host` to `ollama` or `openai` and the matching section's `baseUrl` (default
 | Field | Meaning |
 |---|---|
 | `host` | `lmstudio` \| `ollama` \| `openai` — which local server serves `catalog.local`. |
-| `autoSelect` | Select `cuttle/auto` at session start (unless `--model` was passed). |
+| `autoSelect` | Opt in to selecting `cuttle/auto` at session start. Even when `true`, the session is left alone if no catalog is configured. |
 | `classifier.model` | `provider/model` of the decision model. `lmstudio/…` is called locally. The model part must be a `key` from LM Studio's `GET /api/v1/models`. |
 | `classifier.fallback` | `heuristic` \| `local` \| `cloud` when the classifier is unavailable. |
 | `catalog.local` / `catalog.cloud` | Ordered candidate models. First match wins. |

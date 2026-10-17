@@ -102,7 +102,7 @@ All five questions were answered by running pi 1.2.0. Full evidence is on the cl
 
 | Question | Answer | Consequence |
 |---|---|---|
-| `defaultModel: "cuttle/auto"` resolves at startup? | **No** | Select it on `session_start` via `pi.setModel` (#24). |
+| `defaultModel: "cuttle/auto"` resolves at startup? | **No** | Select it on `session_start` via `pi.setModel`; `autoSelect` defaults to `false`, so this is opt-in (#24). |
 | `message_end` once per provider request? | **Yes** | Slot release is exact; stale reaping is a safety net (#25). |
 | Extension flags readable in the factory? | **No** | Read `--cuttle-force` lazily in `route()` (#26). |
 | LM Studio load accepts a TTL? | **No** | Unload by `instance_id`; TTL is server-side (#27). |

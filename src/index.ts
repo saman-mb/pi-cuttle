@@ -6,7 +6,9 @@
  *
  * Delivery notes proven by the spikes (docs/ARCHITECTURE.md):
  *   - #24: `defaultModel` does NOT resolve an extension virtual model. "By default" is
- *          delivered by selecting `cuttle/auto` on `session_start` via `pi.setModel`.
+ *          delivered by selecting `cuttle/auto` on `session_start` via `pi.setModel`. The
+ *          default for `autoSelect` is false: the extension registers the virtual models but
+ *          does not hijack the session model unless the user explicitly opts in.
  *   - #26: extension flags are unreadable during the factory; `--cuttle-force` is read lazily.
  *   - #25: `message_end` fires exactly once per assistant message.
  *   - #28: children only route if they load this extension, so the documented setup adds it
@@ -102,6 +104,10 @@ export default function modelRouter(pi: ExtensionAPI): void {
 		if (!rt.config.autoSelect) return;
 		if (explicitModelRequested(process.argv)) return;
 		if (ctx.model?.provider === VIRTUAL_PROVIDER) return;
+		if (rt.config.catalog.local.length === 0 && rt.config.catalog.cloud.length === 0) {
+			log?.("session_start no catalog configured, leaving model unchanged");
+			return;
+		}
 		const model = ctx.modelRegistry.find(VIRTUAL_PROVIDER, "auto");
 		log?.(`session_start selecting cuttle/auto found=${!!model}`);
 		if (model) await pi.setModel(model);
