@@ -5,6 +5,8 @@ versions follow [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-10-17
+
 ### Changed
 
 - **The package is now `pi-cuttle`** (was `pi-model-router`). Nothing from this repository had
@@ -114,5 +116,6 @@ OpenAI-compatible host behind the same abstraction.
 - The heuristic scored 70.5% on the routing corpus (33 cloud prompts misrouted to
   local); rewritten as signal-based scoring, measured at 100% on the corpus (#43).
 
-[Unreleased]: https://github.com/saman-mb/pi-cuttle/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/saman-mb/pi-cuttle/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.2.0
 [0.1.0]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.1.0
