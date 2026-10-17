@@ -16,7 +16,7 @@ import type { HostCapabilities, RouterConfig } from "./types.ts";
 
 export const DEFAULTS: RouterConfig = {
 	host: "lmstudio",
-	autoSelect: true,
+	autoSelect: false,
 	classifier: { fallback: "heuristic", timeoutMs: 4000, stateChars: 16_000 },
 	catalog: { local: [], cloud: [] },
 	policy: {

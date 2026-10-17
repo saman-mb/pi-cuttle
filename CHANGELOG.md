@@ -38,6 +38,12 @@ versions follow [SemVer](https://semver.org/).
 
 ### Fixed
 
+- **Installing the extension no longer hijacks every new session** (#67). `autoSelect` defaulted
+  to `true`, and because the package is loaded as a personal extension, its `session_start`
+  hook switched every session — including subagent children — to `cuttle/auto` even when no
+  catalog was configured. The default is now `false` (opt-in), and `session_start` also leaves
+  the model alone when `catalog.local` and `catalog.cloud` are both empty.
+
 - **The decision-model classifier never ran on LM Studio** (#57). `decideTier` detached
   `host.systemOne` from its host, so `this.request` threw on the first call and every turn fell
   back to the regex heuristic — silently, because the fallback is graceful and looks correct.
