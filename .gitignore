@@ -6,3 +6,6 @@ dist/
 # Runtime state written by the local governor (never commit).
 .slots/
 *.slot.json
+
+# Shipmates isolated command worktrees (auto-managed)
+.shipmates/worktrees/

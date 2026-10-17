@@ -5,6 +5,16 @@ versions follow [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-10-17
+
+### Fixed
+
+- **Installing the extension no longer hijacks every new session** (#67). `autoSelect` defaulted
+  to `true`, and because the package is loaded as a personal extension, its `session_start`
+  hook switched every session — including subagent children — to `cuttle/auto` even when no
+  catalog was configured. The default is now `false` (opt-in), and `session_start` also leaves
+  the model alone when `catalog.local` and `catalog.cloud` are both empty.
+
 ## [0.2.0] — 2026-10-16
 
 ### Changed
@@ -39,12 +49,6 @@ versions follow [SemVer](https://semver.org/).
   re-renders all three deterministically; `scripts/render-badges.sh` reads the version itself.
 
 ### Fixed
-
-- **Installing the extension no longer hijacks every new session** (#67). `autoSelect` defaulted
-  to `true`, and because the package is loaded as a personal extension, its `session_start`
-  hook switched every session — including subagent children — to `cuttle/auto` even when no
-  catalog was configured. The default is now `false` (opt-in), and `session_start` also leaves
-  the model alone when `catalog.local` and `catalog.cloud` are both empty.
 
 - **The decision-model classifier never ran on LM Studio** (#57). `decideTier` detached
   `host.systemOne` from its host, so `this.request` threw on the first call and every turn fell
@@ -136,6 +140,7 @@ OpenAI-compatible host behind the same abstraction.
 - The heuristic scored 70.5% on the routing corpus (33 cloud prompts misrouted to
   local); rewritten as signal-based scoring, measured at 100% on the corpus (#43).
 
-[Unreleased]: https://github.com/saman-mb/pi-cuttle/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/saman-mb/pi-cuttle/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.2.1
 [0.2.0]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.2.0
 [0.1.0]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.1.0
