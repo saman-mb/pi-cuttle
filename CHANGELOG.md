@@ -3,7 +3,7 @@
 All notable changes to this project. Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [SemVer](https://semver.org/).
 
-## [0.3.0] — 2026-10-18
+## [0.3.1] — 2026-10-18
 
 ### Added
 
@@ -178,8 +178,8 @@ OpenAI-compatible host behind the same abstraction.
 - The heuristic scored 70.5% on the routing corpus (33 cloud prompts misrouted to
   local); rewritten as signal-based scoring, measured at 100% on the corpus (#43).
 
-[Unreleased]: https://github.com/saman-mb/pi-cuttle/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.3.0
+[Unreleased]: https://github.com/saman-mb/pi-cuttle/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.3.1
 [0.2.1]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.2.1
 [0.2.0]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.2.0
 [0.1.0]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.1.0
