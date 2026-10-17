@@ -5,6 +5,49 @@ versions follow [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Phase-2 routing gates** (`delegate`, `role`, `result judge`, `struggle trigger`). Each gate
+  is config-gated and starts in shadow mode by default. The classifier asks gate questions in
+  the same forward pass as the complexity question, so there is no extra latency per turn.
+- **`/cuttle shadow-report [days]`** prints gate agreement statistics from
+  `~/.pi/agent/pi-cuttle/shadow.jsonl`, so gates can be promoted out of shadow only after they
+  agree with live outcomes.
+
+### Changed
+
+- `Decision` now carries an optional `gates` field with normalized verdicts, and the decision
+  reason includes a summary when gates are active.
+
+## [0.3.0] — 2026-10-18
+
+### Changed
+
+- **The router no longer talks to local servers directly.** Every model and every classifier is
+  resolved through pi's model registry (`ctx.modelRegistry`). This removes all host-specific
+  code (LM Studio, ollama, OpenAI-compatible adapters) and means pi-cuttle works with any local
+  provider pi already supports — llama.cpp router, MTPLX, LM Studio, ollama, vLLM — without
+  hard-coding URLs, protocols, or server lifecycles.
+- **The config file and state directory are renamed to `pi-cuttle`.** `~/.pi/agent/cuttle.json`
+  moves to `~/.pi/agent/pi-cuttle.json` and `~/.pi/agent/cuttle/` moves to
+  `~/.pi/agent/pi-cuttle/`. Existing files are migrated automatically on first load.
+- **`/cuttle` is now a simple toggle.** `/cuttle on` enables automatic routing, `/cuttle off`
+  disables it and restores the previous model. The per-session tier pins
+  (`/cuttle local|cloud|auto|fast-local`) are removed; select individual virtual models through
+  pi's model picker if you want to override a session.
+- **Model selection uses the classifier's complexity score.** Within the chosen tier, the router
+  reads each candidate's context window from pi's registry and picks the smallest model that can
+  handle the score. This replaces hand-picked tier lists with dynamic, capacity-aware selection.
+- **The loaded-model ceiling is removed.** The previous ceiling only worked with LM Studio's
+  native API. With the router using pi's registry, the extension no longer has direct visibility
+  into what a server keeps loaded. The cross-process concurrency cap (`local.maxConcurrent`) still
+  prevents fanout from swamping the server; configure server-side memory limits separately.
+
+### Fixed
+
+- **Classifier failures are never silent.** The classifier path now always goes through pi's
+  registry, and any failure is recorded in the decision reason, the debug log, and `/cuttle status`.
+
 ## [0.2.1] — 2026-10-17
 
 ### Fixed
@@ -140,7 +183,8 @@ OpenAI-compatible host behind the same abstraction.
 - The heuristic scored 70.5% on the routing corpus (33 cloud prompts misrouted to
   local); rewritten as signal-based scoring, measured at 100% on the corpus (#43).
 
-[Unreleased]: https://github.com/saman-mb/pi-cuttle/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/saman-mb/pi-cuttle/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.3.0
 [0.2.1]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.2.1
 [0.2.0]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.2.0
 [0.1.0]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.1.0

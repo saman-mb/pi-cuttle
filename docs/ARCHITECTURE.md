@@ -9,18 +9,13 @@ fanout exhaust local memory.
 ## Relationship to Cuttle
 
 This package is the pi extension for [Cuttle](https://github.com/saman-mb/cuttle), and it is
-where Cuttle's routing was prototyped — the "prototype routing as a pi extension" item in
-Cuttle's brief (phase 00, epic #100). The two share a design, not a code path:
+where Cuttle's routing was prototyped. The two share a design, not a code path:
 
-- Nothing here imports Cuttle or Python. `route()` stays self-contained by design (see the
-  invariants below), so a foreground subagent child that never loaded the engine still routes.
+- Nothing here imports Cuttle or Python.
 - Nothing here requires Cuttle to be installed, running, or even present.
 - The overlap that must be kept honest: the complexity classes, the escalate-on-struggle rule,
   and the decision-ledger shape. If one side changes those and the other does not, that is
   drift, not a variant.
-- **Open question:** whether `decide()` is owned permanently here, or in Cuttle with this
-  extension delegating over the engine's gateway (phase 00 gateway item, #100). Until that is
-  settled, the classification rules in `src/classifier.ts` are authoritative for pi.
 
 ## Verified pi mechanics
 
@@ -44,8 +39,7 @@ or the `pi-subagents` package.
 | `pi.registerCommand`, `ctx.ui.select`, `pi.registerFlag`, `pi.getFlag`, `ctx.getContextUsage`, `pi.getSettings` | `dist/core/extensions/types.d.ts` |
 | `message_end` delivers the authoritative `AssistantMessage` with `provider`, `model`, `stopReason`, `errorMessage`, `usage` | `docs/extensions.md:106`; `@earendil-works/pi-ai dist/types.d.ts:357` |
 | `ctx.sessionManager.getSessionId()` | `dist/core/session-manager.d.ts:178` |
-| LM Studio `GET /api/v1/models` exposes `loaded_instances[].id` (+ `config.parallel`, `remaining_ttl_seconds`); `POST /api/v1/models/unload` takes `instance_id` | live probe of LM Studio on `:1235` |
-| ollama `GET /api/tags` / `GET /api/ps` / `POST /api/generate {keep_alive}` / `POST /api/chat` | documented ollama API; adapter unit-tested with a fake client (no live install on the build machine) |
+| `ctx.modelRegistry.findOfType("classifier", provider, id)` and `ctx.modelRegistry.classify(model, context, options)` | `dist/core/extensions/types.d.ts` |
 
 ## Invariants
 
@@ -55,38 +49,35 @@ or the `pi-subagents` package.
    exceptions keep the decision honest: struggle escalation (#41) moves a flailing local
    session to cloud mid-turn and steps back down after `cleanTurns` clean user turns;
    a failure-driven escalation (#37) re-decides on the next user turn.
-2. **`route()` is self-contained.** It may call `ctx.modelRegistry`, the configured
-   local host over HTTP, and the filesystem. It may not rely on another extension's hooks: a
-   foreground subagent child shares the parent process but does not reload ambient
-   extensions.
-3. **The memory cap is on disk.** Async children run in separate processes; an
+2. **All models come from pi's registry.** `route()` resolves every physical model and
+   every classifier through `ctx.modelRegistry`. It does not talk to any local server
+   directly, so it works with any provider pi already supports (LM Studio, llama.cpp router,
+   MTPLX, ollama, vLLM, …) without host-specific code.
+3. **The concurrency cap is on disk.** Async children run in separate processes; an
    in-memory counter is meaningless across them. `LocalGovernor` reads and writes
    slot files under `local.slotDir`.
 4. **Release is approximate.** Slots are freed on `message_end`, on process exit,
    and by stale reaping on every acquire. Correctness rests on reaping.
-5. **The heuristic never throws.** When the local host or the classifier is unavailable,
-   `decideTier` returns a deterministic answer.
-6. **Hosts are pluggable; capabilities are explicit.** All local-inference calls go through
-   `LocalHost` (`src/host.ts`). Each host declares `canListLoaded`, `canLoadUnload`,
-   `hasDecisionModels`, `hasModelSizes`; the governor and classifier degrade per flag
-   rather than assuming LM Studio. A host with no loaded-model introspection still gets
-   cross-process slot accounting — the cap that prevents fanout OOMs — but no ceiling
-   enforcement.
+5. **The heuristic never throws.** When the classifier is unavailable,
+   `decideTier` returns a deterministic answer and records the failure in the reason.
+6. **No silent fallback.** A classifier failure is always visible in the decision reason,
+   the debug log, and `/cuttle status`.
+7. **Gates are one forward pass.** Phase-2 gates (`delegate`, `role`, `judge`, `struggle`)
+   are asked alongside the complexity question in a single `ctx.modelRegistry.classify()`
+   call. They start in shadow mode and only affect routing after `/cuttle shadow-report`
+   proves agreement.
 
 ## Components
 
 | File | Responsibility |
 |---|---|
-| `src/config.ts` | Load and merge `cuttle.json` over defaults. |
-| `src/host.ts` | `LocalHost` interface + capabilities; `createHost` picks by `config.host`. |
-| `src/lmstudio.ts` | LM Studio adapter (native `/api/v1` management API, System One decisions). |
-| `src/ollama.ts` | ollama adapter (`/api/tags`, `/api/ps`, `keep_alive` load/unload). |
-| `src/openai-host.ts` | Generic OpenAI-compatible adapter (capability floor). |
-| `src/governor.ts` | Cross-process slot broker + loaded-model cooperation (capability-gated). |
-| `src/classifier.ts` | `decideTier`: classifier call via the local host or pi, with heuristic fallback. |
+| `src/config.ts` | Load and merge `pi-cuttle.json` over defaults. |
+| `src/governor.ts` | Cross-process slot broker (concurrency cap only). |
+| `src/classifier.ts` | `decideTier`: classifier call via pi's registry, with heuristic fallback. |
 | `src/virtual-models.ts` | Register `cuttle/auto`, `cuttle/local`, `cuttle/cloud`, `cuttle/fast-local`; `route()` policy + spill. |
 | `src/telemetry.ts` | Decision ledger + `/cuttle stats` aggregation (metadata only). |
-| `src/commands.ts` | `/cuttle` command family (status, init, models, policy, limit, doctor, stats). |
+| `src/commands.ts` | `/cuttle` command family (on/off, status, init, models, policy, limit, doctor, stats, shadow-report). |
+| `src/shadow.ts` | Phase-2 shadow-mode gate ledger and `/cuttle shadow-report` aggregation. |
 | `src/index.ts` | Extension factory; wires the above; `message_end` release hook. |
 
 ## Evaluation
@@ -98,12 +89,9 @@ the floor. Add a prompt that exposed a real misroute before changing heuristics.
 
 ## Verification results
 
-All five questions were answered by running pi 1.2.0. Full evidence is on the closed issues.
-
 | Question | Answer | Consequence |
 |---|---|---|
 | `defaultModel: "cuttle/auto"` resolves at startup? | **No** | Select it on `session_start` via `pi.setModel`; `autoSelect` defaults to `false`, so this is opt-in (#24). |
 | `message_end` once per provider request? | **Yes** | Slot release is exact; stale reaping is a safety net (#25). |
 | Extension flags readable in the factory? | **No** | Read `--cuttle-force` lazily in `route()` (#26). |
-| LM Studio load accepts a TTL? | **No** | Unload by `instance_id`; TTL is server-side (#27). |
 | Children inherit virtual models? | **Not reliably** | Load the extension via `subagentOnlyExtensions` (#28). |

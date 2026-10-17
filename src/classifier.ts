@@ -1,20 +1,25 @@
 /**
  * The "which side should this turn run on" decision.
  *
- * Two paths:
- *   1. A decision model (local or cloud) answers a typed question through pi's
- *      `ctx.modelRegistry.classify()` when the configured model is a registered
- *      pi classifier, or through a direct LM Studio chat call when it is local.
- *   2. A deterministic heuristic, used as the fallback and when no model is set.
+ * Uses pi's model registry exclusively. When a decision model is configured in
+ * `classifier.model`, it is invoked through `ctx.modelRegistry.classify()`. When the
+ * classifier is absent, unavailable, or fails, a deterministic heuristic takes over.
  *
- * The heuristic must never throw or block: it is what runs when LM Studio is down.
+ * The heuristic must never throw or block: it is what runs when no classifier is configured.
  */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ClassifierQuestion, Message } from "@earendil-works/pi-ai";
 
-import type { Message } from "@earendil-works/pi-ai";
-
-import type { LocalHost } from "./host.ts";
-import type { Decision, RouterConfig, Tier } from "./types.ts";
+import type {
+	ChoiceGateConfig,
+	Decision,
+	GateAnswer,
+	GateConfig,
+	GateVerdicts,
+	GatesConfig,
+	RouterConfig,
+	Tier,
+} from "./types.ts";
 
 /**
  * Signals that lean local: the request names a mechanical operation on a known
@@ -99,14 +104,6 @@ export function struggleSignals(messages: readonly Message[], window: number): {
 	return { errors };
 }
 
-/** Providers whose models are served by the *local* host, so the classifier call is free. */
-/** True when `provider` names a local host token, so the classifier call is free. */
-export function isLocalProvider(provider: string): boolean {
-	return LOCAL_PROVIDERS.has(provider);
-}
-
-const LOCAL_PROVIDERS = new Set<string>(["lmstudio", "ollama", "openai", "llama.cpp", "llamacpp", "vllm"]);
-
 /** Parse `provider/id` where `id` may itself contain slashes (e.g. Hugging Face ids). */
 export function splitRef(ref: string): { provider: string; id: string } | undefined {
 	const slash = ref.indexOf("/");
@@ -114,170 +111,140 @@ export function splitRef(ref: string): { provider: string; id: string } | undefi
 	return { provider: ref.slice(0, slash), id: ref.slice(slash + 1) };
 }
 
-/**
- * Physical per-batch token limit for the decision models this project targets (#50).
- *
- * System One models answer in a single forward pass: the runtime evaluates the whole prompt in
- * one physical batch, which LM Studio defaults to 512 tokens. A longer prompt is rejected
- * ("input (N tokens) is too large to process"), and the classifier used to silently fall through
- * to the heuristic. `physical_batch_size` is not settable over REST, and an *unloaded* catalog
- * entry omits batch fields entirely, so 512 is the conservative default for the first
- * classification; `LocalHost.physicalBatchSize` refines it once the model is loaded.
- */
-export const DEFAULT_PHYSICAL_BATCH_TOKENS = 512;
-
-/** Tokens the System One wrapper (instructions, criteria, model name, answer keys) adds. */
-export const DECISION_WRAPPER_TOKENS = 128;
-
-/**
- * Conservative chars-per-token for the wrapped decision payload. Realistic English measured
- * 5.26-8.0 chars/token; 5.0 leaves headroom for token-dense content such as code or CJK.
- */
-export const DECISION_CHARS_PER_TOKEN = 5;
-
-/** Smallest state we will send a decision model; below this a retry cannot help. */
-export const MIN_DECISION_STATE_CHARS = 256;
-
-/** Budget multiplier for a single retry after a classifier call times out (#63). */
-const COLD_START_RETRY_MULTIPLIER = 2;
-
-/**
- * Characters of user prompt a decision model can take in one physical batch, after the fixed
- * wrapper overhead. Pure and exported so `/cuttle doctor` can report it (#50).
- */
-export function decisionStateBudget(physicalBatchSize = DEFAULT_PHYSICAL_BATCH_TOKENS): number {
-	// A zero or non-finite batch means the host reported nothing usable, not that the model can
-	// take zero tokens; fall back to the conservative default rather than flooring to 256 chars.
-	const batch =
-		Number.isFinite(physicalBatchSize) && physicalBatchSize > 0 ? physicalBatchSize : DEFAULT_PHYSICAL_BATCH_TOKENS;
-	const tokens = Math.max(0, batch - DECISION_WRAPPER_TOKENS);
-	return Math.max(MIN_DECISION_STATE_CHARS, Math.floor(tokens * DECISION_CHARS_PER_TOKEN));
-}
-
-/** True when an error is the decision model's single-batch limit rejecting the prompt (#50). */
-export function isBatchLimitError(message: string | undefined): boolean {
-	return /too large to process|batch size|physical_batch/i.test(message ?? "");
-}
-
-/**
- * A first call to a decision model that has just been loaded — or that is being loaded alongside
- * the session-start warm target — can exceed the interactive budget even though the model itself
- * answers in about a second once warm (#63).
- */
-export function isTimeoutError(message: string | undefined): boolean {
-	return /aborted due to timeout|timed out|timeout/i.test(message ?? "");
-}
-
-/**
- * Read the host's reported batch size, treating every kind of "no answer" alike (#50): an absent
- * method, a throw, or a falsy value (notably `0`) all mean "unknown". A non-finite value passes
- * through here and is normalised to the conservative default by `decisionStateBudget`, which is
- * the single place the budget is derived.
- */
-export async function detectPhysicalBatchSize(host: LocalHost, id: string): Promise<number | undefined> {
-	if (!host.physicalBatchSize) return undefined;
-	try {
-		return (await host.physicalBatchSize(id)) || undefined;
-	} catch {
-		return undefined;
-	}
-}
-
-type SystemOne = NonNullable<LocalHost["systemOne"]>;
-type SystemOneResult = Awaited<ReturnType<SystemOne>>;
-
-const COMPLEXITY_QUESTIONS: Record<string, { type: string } & Record<string, unknown>> = {
-	complexity: {
-		type: "choice",
-		instructions: "How demanding is the software engineering work requested in prompt?",
-		criteria: {
-			standard: "Mechanical, well-scoped, or informational",
-			complex: "Design judgement, cross-cutting change, or hard debugging",
-		},
+const COMPLEXITY_QUESTION: ClassifierQuestion = {
+	type: "choice",
+	instructions: "How demanding is the software engineering work requested in prompt?",
+	criteria: {
+		standard: "Mechanical, well-scoped, or informational",
+		complex: "Design judgement, cross-cutting change, or hard debugging",
 	},
 };
 
-/**
- * One System One complexity call. If the model rejects an over-long prompt as exceeding its
- * physical batch, retry exactly once at half the state (#50).
- *
- * The retry deliberately keeps no memory of the smaller size. Remembering it would cap every
- * later classification of that model at the reduced size, even for ordinary prose that fits the
- * budget comfortably — a permanent loss of classifier signal to save one cheap failed request.
- *
- * Each attempt gets its own timeout: a shared `AbortSignal.timeout()` starts counting when it is
- * created, so a slow first attempt would otherwise leave the retry already aborted and therefore
- * pointless. The cost is a worst case of two timeouts on the (rare) overflow path.
- */
-async function systemOneWithRetry(
-	systemOne: SystemOne,
-	id: string,
-	state: string,
-	timeoutMs: number,
-	log?: (message: string) => void,
-): Promise<SystemOneResult> {
-	try {
-		return await systemOne(id, { prompt: state }, COMPLEXITY_QUESTIONS, { signal: AbortSignal.timeout(timeoutMs) });
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		if (isTimeoutError(message)) {
-			// #63: the session-start preload loads the warm target concurrently with the classifier, and
-			// a decision model's first call after a load is slower than a warm one. On the default budget
-			// the first call of a cold session times out and the turn falls back to the heuristic — the
-			// feature this package exists to provide. One retry at double the budget buys that verdict
-			// back; with `reclassify: session` this costs at most one wait per session, and a second
-			// timeout is reported exactly as before.
-			const retryBudget = timeoutMs * COLD_START_RETRY_MULTIPLIER;
-			log?.(`classifier: ${message}; retrying once with ${retryBudget}ms`);
-			return await systemOne(id, { prompt: state }, COMPLEXITY_QUESTIONS, {
-				signal: AbortSignal.timeout(retryBudget),
-			});
-		}
-		const shrunk = Math.floor(state.length / 2);
-		if (!isBatchLimitError(message) || shrunk < MIN_DECISION_STATE_CHARS) throw error;
-		log?.(`classifier: batch limit at ${state.length} chars (${message}); retrying with ${shrunk}`);
-		const result = await systemOne(id, { prompt: state.slice(0, shrunk) }, COMPLEXITY_QUESTIONS, {
-			signal: AbortSignal.timeout(timeoutMs),
-		});
-		return result;
+function defaultChoices(kind: keyof GatesConfig): string[] {
+	switch (kind) {
+		case "delegate":
+			return ["inline", "scout", "worker", "oracle", "driver"];
+		case "role":
+			return ["scout", "worker", "oracle", "driver"];
+		default:
+			return [];
 	}
 }
 
-const CLASSIFIER_PROMPT = (prompt: string, threshold: number): string =>
-	[
-		"You are a routing classifier. Decide whether the software-engineering request below",
-		"needs a large cloud model, or can be handled by a small local model.",
-		"Answer with exactly one word: LOCAL or CLOUD.",
-		`Choose CLOUD when the work needs design judgement, cross-cutting changes, or hard debugging.`,
-		`Choose LOCAL for mechanical, well-scoped, or informational work.`,
-		"",
-		"REQUEST:",
-		prompt,
-	].join("\n");
+function choiceQuestion(cfg: ChoiceGateConfig, kind: keyof GatesConfig): ClassifierQuestion {
+	const choices = cfg.choices && cfg.choices.length > 0 ? cfg.choices : defaultChoices(kind);
+	return {
+		type: "choice",
+		instructions: `What is the most appropriate ${kind} for this turn?`,
+		criteria: Object.fromEntries(choices.map((c) => [c, c])),
+	};
+}
 
-function parseTier(raw: string): Tier | undefined {
-	const word = raw.trim().toUpperCase();
-	if (word.startsWith("CLOUD")) return "cloud";
-	if (word.startsWith("LOCAL")) return "local";
-	return undefined;
+function boolQuestion(instructions: string): ClassifierQuestion {
+	return { type: "bool", instructions, criteria: { true: "yes", false: "no" } };
+}
+
+/** Whether any gate is configured and enabled. */
+export function gatesActive(gates?: GatesConfig): boolean {
+	if (!gates) return false;
+	return Object.values(gates).some((g) => g?.enabled);
+}
+
+/**
+ * Build the full set of classifier questions for a turn. Complexity is always asked.
+ * Phase-2 gates are added when enabled. Result judge is included only when the most
+ * recent message is a tool result (i.e. a subagent or tool just returned).
+ */
+export function buildQuestions(
+	config: RouterConfig,
+	messages?: readonly Message[],
+): Record<string, ClassifierQuestion> {
+	const questions: Record<string, ClassifierQuestion> = { complexity: COMPLEXITY_QUESTION };
+	const gates = config.gates;
+	if (!gates) return questions;
+
+	if (gates.delegate?.enabled) {
+		questions.delegate = boolQuestion("Should this turn be delegated to a subagent?");
+		if (gates.delegate.choices && gates.delegate.choices.length > 0) {
+			questions.delegate_role = choiceQuestion(gates.delegate, "delegate");
+		}
+	}
+	if (gates.role?.enabled) {
+		questions.role = choiceQuestion(gates.role, "role");
+	}
+	if (gates.struggle?.enabled) {
+		questions.struggle = boolQuestion("Is the current request likely to cause the model to struggle?");
+	}
+
+	const last = messages?.[messages.length - 1];
+	if (gates.judge?.enabled && last?.role === "toolResult") {
+		questions.judge = boolQuestion("Did the most recent tool/subagent result satisfy the request?");
+	}
+
+	return questions;
+}
+
+function toGateAnswer(answer: { type: "choice"; choice: string; probabilities: Record<string, number>; confidence: number } | { type: "bool"; probability: number } | { type: "score"; score: number; confidence: number }): GateAnswer {
+	if (answer.type === "choice") {
+		return { type: "choice", choice: answer.choice, probabilities: answer.probabilities, confidence: answer.confidence };
+	}
+	if (answer.type === "bool") {
+		return { type: "bool", probability: answer.probability };
+	}
+	return { type: "score", score: answer.score, confidence: answer.confidence };
+}
+
+function binding(cfg: GateConfig, answer: GateAnswer): boolean {
+	const threshold = cfg.threshold ?? 0.7;
+	if (answer.type === "bool") return answer.probability >= threshold;
+	if (answer.type === "score") return answer.score >= threshold;
+	return answer.confidence >= threshold;
+}
+
+/**
+ * Extract normalized gate verdicts from classifier answers. Each verdict carries whether the
+ * gate is currently in shadow mode (so callers can log without acting).
+ */
+export function parseGateVerdicts(answers: Record<string, unknown>, gates?: GatesConfig): GateVerdicts | undefined {
+	if (!gatesActive(gates)) return undefined;
+	const verdicts: GateVerdicts = {};
+	const gateMap = gates ?? {};
+
+	const add = (key: keyof GateVerdicts, cfg?: GateConfig) => {
+		const raw = answers[key];
+		if (!cfg?.enabled || typeof raw !== "object" || raw === null) return;
+		const answer = toGateAnswer(raw as GateAnswer & { type: "choice" | "bool" | "score" });
+		verdicts[key] = { ...answer, shadow: cfg.shadow !== false };
+	};
+
+	add("delegate", gateMap.delegate);
+	add("role", gateMap.role);
+	add("struggle", gateMap.struggle);
+	add("judge", gateMap.judge);
+
+	return Object.keys(verdicts).length > 0 ? verdicts : undefined;
 }
 
 /**
  * Decide the tier for one prompt. Never throws: any failure falls back per config.
  *
- * `threshold` is only used by the heuristic and by the local classifier's numeric
- * mapping; the classifier's own answer is authoritative when it is parseable.
+ * The classifier is always invoked through pi's model registry, so it works with any
+ * provider pi already knows about (llama.cpp router, cloud classifiers, etc.) without
+ * hard-coding a host or protocol.
+ *
+ * When phase-2 gates are enabled they are asked in the same forward pass as complexity,
+ * satisfying the one-pass invariant.
  */
 export async function decideTier(input: {
 	config: RouterConfig;
 	prompt: string;
 	ctx: ExtensionContext;
-	host: LocalHost;
+	messages?: readonly Message[];
 	forced?: Tier;
-	/** Optional router log sink; receives trim and failure lines (#50). */
+	/** Optional router log sink; receives trim and failure lines. */
 	log?: (message: string) => void;
 }): Promise<Decision> {
-	const { config, prompt, ctx, host, forced, log } = input;
+	const { config, prompt, ctx, messages, forced, log } = input;
 	if (forced) return { tier: forced, score: 0, source: "pin", reason: `pinned ${forced}` };
 	if (config.classifier.fallback === "heuristic" && !config.classifier.model) return heuristicDecision(config, prompt);
 
@@ -289,72 +256,39 @@ export async function decideTier(input: {
 	const clipped = prompt.slice(0, config.classifier.stateChars);
 	let classifierError: string | undefined;
 	try {
-		let answer: string | undefined;
-		if (LOCAL_PROVIDERS.has(parsed.provider)) {
-			// The provider names a local host, so the decision itself costs nothing.
-			const type = (await host.modelType?.(parsed.id)) ?? undefined;
-			if (type === "decision" && host.capabilities.hasDecisionModels && host.systemOne) {
-				// A Jev-style decision model: one typed question over the System One API. The whole
-				// prompt is a single physical batch, so trim it to that budget and retry once smaller
-				// on overflow, rather than silently missing the batch limit (#50).
-				// #57: `LmStudioHost.systemOne` is a prototype method that calls `this.request`, so it
-				// must stay bound to its host. Extracting it as a bare function throws on the first
-				// call, and the graceful fallback then hides that as an ordinary heuristic decision.
-				const systemOne = host.systemOne.bind(host);
-				const detected = await detectPhysicalBatchSize(host, parsed.id);
-				const budget = decisionStateBudget(detected);
-				const cap = Math.min(config.classifier.stateChars, budget);
-				const state = prompt.slice(0, cap);
-				if (state.length < prompt.length) {
-					log?.(`classifier: state trimmed ${prompt.length} -> ${state.length} chars (physical_batch=${detected ?? DEFAULT_PHYSICAL_BATCH_TOKENS})`);
-				}
-				const result = await systemOneWithRetry(systemOne, parsed.id, state, config.classifier.timeoutMs, log);
-				const choice = result.answers.complexity;
-				if (choice?.type === "choice") {
-					const complex = choice.probabilities?.complex ?? (choice.choice === "complex" ? 1 : 0);
-					const tier: Tier = complex >= 0.5 ? "cloud" : "local";
-					return { tier, score: complex, source: "classifier", reason: `local system-one p(complex)=${complex.toFixed(2)}` };
-				}
-			} else {
-				// Only the chat path uses this signal: the decision path builds a fresh one per attempt
-				// inside `systemOneWithRetry`, so creating it here would just start a discarded timer.
-				answer = await host.chat(parsed.id, CLASSIFIER_PROMPT(clipped, config.policy.threshold), {
-					signal: AbortSignal.timeout(config.classifier.timeoutMs),
-				});
-			}
-		} else {
-			const model = ctx.modelRegistry.findOfType("classifier", parsed.provider, parsed.id);
-			if (!model) throw new Error(`classifier ${parsed.provider}/${parsed.id} not in catalog`);
-			const result = await ctx.modelRegistry.classify(
-				model,
-				{
-					state: { prompt: clipped },
-					questions: {
-						tier: {
-							type: "choice",
-							instructions: "Which model tier should handle the request in `prompt`?",
-							criteria: { local: "Mechanical, well-scoped, or informational", cloud: "Design judgement or hard debugging" },
-						},
-					},
-				},
-				{ signal: AbortSignal.timeout(config.classifier.timeoutMs) },
-			);
-			const choice = result.stopReason === "stop" ? result.answers.tier : undefined;
-			if (choice?.type === "choice") {
-				const cloud = choice.probabilities.cloud ?? 0;
-				const tier: Tier = cloud >= 0.5 ? "cloud" : "local";
-				return { tier, score: cloud, source: "classifier", reason: `classifier p(cloud)=${cloud.toFixed(2)}` };
-			}
+		const model = ctx.modelRegistry.findOfType("classifier", parsed.provider, parsed.id);
+		if (!model) throw new Error(`classifier ${parsed.provider}/${parsed.id} not in pi's catalog`);
+		const questions = buildQuestions(config, messages);
+		const result = await ctx.modelRegistry.classify(
+			model,
+			{
+				state: { prompt: clipped },
+				questions,
+			},
+			{ signal: AbortSignal.timeout(config.classifier.timeoutMs) },
+		);
+		const answers = result.stopReason === "stop" ? result.answers : {};
+		const choice = answers.complexity;
+		if (choice?.type === "choice") {
+			const complex = choice.probabilities?.complex ?? (choice.choice === "complex" ? 1 : 0);
+			const tier: Tier = complex >= 0.5 ? "cloud" : "local";
+			const gates = parseGateVerdicts(answers, config.gates);
+			const gateSummary = gates ? ` gates=${formatGateSummary(gates)}` : "";
+			return {
+				tier,
+				score: complex,
+				source: "classifier",
+				reason: `classifier p(complex)=${complex.toFixed(2)}${gateSummary}`,
+				gates,
+			};
 		}
-
-		const tier = answer === undefined ? undefined : parseTier(answer);
-		if (tier) return { tier, score: tier === "cloud" ? 1 : 0, source: "classifier", reason: `classifier said ${tier}` };
+		throw new Error("classifier returned no parseable complexity answer");
 	} catch (error) {
 		classifierError = error instanceof Error ? error.message : String(error);
 		log?.(`classifier: ${classifierError}`);
 	}
 
-	// #53: carry the failure on the decision so the runtime can surface it without the
+	// Carry the failure on the decision so the runtime can surface it without the
 	// caller having to parse the reason string.
 	const failure = { ref, message: classifierError ?? "no answer" };
 	if (config.classifier.fallback === "heuristic") {
@@ -372,6 +306,16 @@ export async function decideTier(input: {
 		classifierFailure: failure,
 		reason: `classifier unavailable (${failure.message}), fallback ${config.classifier.fallback}`,
 	};
+}
+
+function formatGateSummary(gates: GateVerdicts): string {
+	return Object.entries(gates)
+		.map(([key, v]) => {
+			if (v.type === "choice") return `${key}:${v.choice}${v.shadow ? "(shadow)" : ""}`;
+			if (v.type === "bool") return `${key}:p=${v.probability.toFixed(2)}${v.shadow ? "(shadow)" : ""}`;
+			return `${key}:s=${v.score.toFixed(2)}${v.shadow ? "(shadow)" : ""}`;
+		})
+		.join(",");
 }
 
 /**
@@ -397,3 +341,5 @@ export function applyPolicy(
 	}
 	return decision;
 }
+
+export { binding };

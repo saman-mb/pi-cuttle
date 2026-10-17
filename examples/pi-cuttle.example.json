@@ -1,12 +1,13 @@
 {
+  "autoSelect": true,
   "classifier": {
-    "model": "lmstudio/vllm-d3-nano",
+    "model": "llama.cpp/ggml-org/Kev-9B-GGUF:Q8_0",
     "fallback": "heuristic",
     "timeoutMs": 4000,
     "stateChars": 16000
   },
   "catalog": {
-    "local": ["lmstudio/deepseek/deepseek-v4-flash"],
+    "local": ["mtplx/mtplx-qwen38-27b-optimized-quality"],
     "cloud": ["opencode-go/deepseek-v4.1-flash"]
   },
   "policy": {
@@ -18,15 +19,17 @@
   "local": {
     "maxConcurrent": 1,
     "maxConcurrentPerModel": 1,
-    "maxLoadedModels": 1,
     "onFull": "spill",
     "waitMs": 20000,
-    "idleUnloadMs": 300000,
-    "slotDir": "~/.pi/agent/cuttle/slots",
+    "slotDir": "~/.pi/agent/pi-cuttle/slots",
     "staleSlotMs": 300000
   },
-  "lmstudio": {
-    "baseUrl": "http://localhost:1235",
-    "timeoutMs": 8000
+  "telemetry": {
+    "enabled": true,
+    "path": "~/.pi/agent/pi-cuttle/decisions.jsonl",
+    "baseline": "opencode-go/deepseek-v4.1-flash",
+    "pricing": {
+      "opencode-go/deepseek-v4.1-flash": { "input": 0.14, "output": 0.56 }
+    }
   }
 }

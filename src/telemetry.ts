@@ -71,26 +71,21 @@ function costOf(price: Price | undefined, input: number, output: number): number
 
 export class Telemetry {
 	private readonly cfg: TelemetryConfig;
-	/** Bare local model ids, for classifying a recorded model id as local. */
-	private readonly localKeys: Set<string>;
+	/** Full `provider/model` refs configured as local candidates. */
+	private readonly localRefs: Set<string>;
 
 	constructor(cfg: TelemetryConfig, localRefs: readonly string[]) {
 		this.cfg = cfg;
-		this.localKeys = new Set(
-			localRefs.map((ref) => {
-				const slash = ref.indexOf("/");
-				return slash > 0 ? ref.slice(slash + 1) : ref;
-			}),
-		);
+		this.localRefs = new Set(localRefs);
 	}
 
 	get enabled(): boolean {
 		return this.cfg.enabled;
 	}
 
-	/** True when `model` is one of the configured local models (bare id match). */
+	/** True when `provider/model` is one of the configured local candidates. */
 	isLocalModel(model: string): boolean {
-		return this.localKeys.has(model);
+		return this.localRefs.has(model);
 	}
 
 	/** Append one record. Never throws. */

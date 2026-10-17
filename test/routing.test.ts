@@ -6,7 +6,7 @@ import type { Message } from "@earendil-works/pi-ai";
 
 import { DEFAULTS } from "../src/config.ts";
 import type { LocalGovernor } from "../src/governor.ts";
-import type { LocalHost } from "../src/host.ts";
+
 import type { RouterConfig } from "../src/types.ts";
 import { looksLikeLocalFailure, routeRequest, type RouterRuntime } from "../src/virtual-models.ts";
 
@@ -18,7 +18,13 @@ function config(overrides: Partial<RouterConfig> = {}): RouterConfig {
 	return Object.assign(base, overrides);
 }
 
-function ctxWith(opts: { window?: number; tokens?: number | null; missingLocal?: boolean } = {}): ExtensionContext {
+function ctxWith(
+	opts: { window?: number; tokens?: number | null; missingLocal?: boolean; classifyResult?: { stopReason: "stop" | "error"; answers: Record<string, unknown> } } = {},
+): ExtensionContext {
+	const classifyResult = opts.classifyResult ?? {
+		stopReason: "stop",
+		answers: { complexity: { type: "choice", probabilities: { standard: 0.5, complex: 0.5 } } },
+	};
 	return {
 		sessionManager: { getSessionId: () => "s1" },
 		modelRegistry: {
@@ -26,6 +32,11 @@ function ctxWith(opts: { window?: number; tokens?: number | null; missingLocal?:
 				if (opts.missingLocal && provider === "lmstudio") return undefined;
 				return { provider, id, contextWindow: opts.window ?? 100_000 };
 			},
+			findOfType: (type: string, provider: string, id: string) => {
+				if (type !== "classifier") return undefined;
+				return { provider, id, api: "typesafe-system-one" };
+			},
+			classify: async () => classifyResult as never,
 		},
 		getContextUsage: () => ({ tokens: opts.tokens ?? 10, contextWindow: opts.window ?? 100_000, percent: 0.01 }),
 	} as unknown as ExtensionContext;
@@ -47,7 +58,7 @@ function runtime(cfg: RouterConfig, grant = true): { rt: RouterRuntime; acquired
 		},
 		enforceLoadedCeiling: async () => [],
 	} as unknown as LocalGovernor;
-	const rt: RouterRuntime = { config: cfg, host: {} as LocalHost, governor, pins: new Map(), sizes: new Map() };
+	const rt: RouterRuntime = { config: cfg, governor, pins: new Map(), previousModels: new Map(), sizes: new Map() };
 	return { rt, acquired, released };
 }
 
@@ -370,26 +381,29 @@ test("an error resets the clean streak and keeps the session on cloud (#41)", as
 });
 
 test("a failing classifier is recorded on the runtime with its turn (#53)", async () => {
-	const cfg = config({ classifier: { ...DEFAULTS.classifier, model: "lmstudio/decision-x" } });
+	const cfg = config({ classifier: { ...DEFAULTS.classifier, model: "llama.cpp/decision-x" } });
 	const { rt } = runtime(cfg);
-	// The runtime's empty host fake makes the classifier path throw; the turn must still route.
-	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "user" } as never, ctxWith());
+	const ctx = {
+		...ctxWith(),
+		modelRegistry: {
+			find: ctxWith().modelRegistry.find,
+			findOfType: () => ({ provider: "llama.cpp", id: "decision-x" }),
+			classify: async () => { throw new Error("classifier down"); },
+		},
+	} as unknown as ExtensionContext;
+	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "user" } as never, ctx);
 	assert.ok(route.model, "the turn still routes on the heuristic fallback");
-	assert.equal(rt.lastClassifierError?.ref, "lmstudio/decision-x");
+	assert.equal(rt.lastClassifierError?.ref, "llama.cpp/decision-x");
 	assert.equal(rt.lastClassifierError?.turn, 1, "one user message so far");
 	assert.equal(rt.lastClassifierError?.message.length > 0, true);
 });
 
 test("a successful classification clears the recorded failure (#53)", async () => {
-	const cfg = config({ classifier: { ...DEFAULTS.classifier, model: "lmstudio/decision-x" } });
+	const cfg = config({ classifier: { ...DEFAULTS.classifier, model: "llama.cpp/decision-x" } });
 	const { rt } = runtime(cfg);
-	rt.host = {
-		capabilities: { canListLoaded: true, canLoadUnload: true, hasDecisionModels: true, hasModelSizes: true },
-		modelType: async () => "llm",
-		chat: async () => "LOCAL",
-	} as unknown as LocalHost;
-	rt.lastClassifierError = { ref: "lmstudio/decision-x", message: "stale failure", turn: 0, at: 0 };
-	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "user" } as never, ctxWith());
+	rt.lastClassifierError = { ref: "llama.cpp/decision-x", message: "stale failure", turn: 0, at: 0 };
+	const ctx = ctxWith({ classifyResult: { stopReason: "stop", answers: { complexity: { type: "choice", probabilities: { standard: 0.9, complex: 0.1 } } } } });
+	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "user" } as never, ctx);
 	assert.equal(route.state?.decision.source, "classifier");
 	assert.equal(rt.lastClassifierError, undefined, "successful classification clears the failure");
 });
