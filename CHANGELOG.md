@@ -11,7 +11,9 @@ versions follow [SemVer](https://semver.org/).
   classifier model (with submenu), policy mode (cycle), `local.maxConcurrent` (submenu), and
   read-only catalog rows that point to `/cuttle models`. Enter cycles values or opens submenus;
   Esc closes without writing. A committed change writes to the user config file and applies from
-  the next user turn (decide-once invariant).
+  the next routing decision — a new session, or the next user turn when `policy.reclassify` is
+  `"turn"` (the default is `"session"`, so classify-affecting edits usually land in a new
+  session). A turn that already decided keeps its model.
 - **Shadow-section detection** — sections present in `<cwd>/.pi/pi-cuttle.json` are shown as
   `SHADOWED: project file` and refuse edits from the panel, directing users to edit the project
   file instead.

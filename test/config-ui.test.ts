@@ -342,7 +342,10 @@ test("buildNonTuiText mentions next-turn apply semantics", () => {
 		shadowed: [],
 		paths: configPathsForPanel("/tmp"),
 	});
-	assert.ok(text.includes("Changes apply from the next user turn"));
+	// Must not claim the next turn unconditionally: the default `policy.reclassify` is
+	// "session", so a classifier or policy edit generally lands in a new session.
+	assert.ok(text.includes("next routing decision"));
+	assert.ok(text.includes('policy.reclassify is "turn"'));
 });
 
 test("buildNonTuiText lists both config paths", () => {
@@ -510,4 +513,37 @@ test("the config panel closes on cancel instead of trapping the user", async () 
 	assert.ok(component, "the panel component must be constructed in TUI mode");
 	component?.handleInput?.("\x1b"); // Escape
 	assert.equal(resolved, 1, "Escape must resolve the custom UI so the panel can close");
+});
+
+// Region: closing the panel must not masquerade as "no custom UI".
+//
+// Regression guard: closing resolved `custom()` with `undefined`, which the fallback treats as
+// "custom unavailable" — so pressing Escape in the panel also printed the headless config
+// report into the transcript.
+
+test("closing the panel does not print the headless config report", async () => {
+	initTheme();
+	const notifications: string[] = [];
+	let component: { handleInput?: (data: string) => void } | undefined;
+	const ctx = {
+		mode: "tui",
+		ui: {
+			notify: (message: string) => notifications.push(message),
+			// Model the real contract: custom() resolves only when the component calls `done`.
+			custom: (factory: (tui: unknown, theme: unknown, kb: unknown, done: (result: unknown) => void) => unknown) =>
+				new Promise((resolve) => {
+					component = factory({}, {}, {}, (result) => resolve(result)) as typeof component;
+				}),
+		},
+		modelRegistry: { findOfType: () => undefined, find: () => undefined, getAvailable: () => [], getModelsOfType: () => [] },
+	};
+
+	const panel = showConfigPanel(panelRuntime(), ctx as never, loadedStub() as never);
+	// Let the panel reach the point where it is awaiting the custom component.
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.ok(component, "the panel component must be constructed");
+	component?.handleInput?.("\x1b"); // Escape
+	await panel;
+
+	assert.equal(notifications.length, 0, "closing the panel must not emit the non-TUI report");
 });
