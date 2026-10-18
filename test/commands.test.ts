@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { buildStatusLines, checkCatalog } from "../src/commands.ts";
+import { buildInitPatch, buildStatusLines, checkCatalog } from "../src/commands.ts";
 import { DEFAULTS } from "../src/config.ts";
 import type { RouterRuntime } from "../src/virtual-models.ts";
 
@@ -43,6 +43,26 @@ test("checkCatalog reports a fully unresolvable tier as all-missing", () => {
 	const { resolvable, missing } = checkCatalog(["typo/model"], () => undefined);
 	assert.deepEqual(resolvable, []);
 	assert.deepEqual(missing, ["typo/model"]);
+});
+
+test("buildInitPatch writes a full first-run config", () => {
+	const patch = buildInitPatch({
+		autoSelect: true,
+		classifier: "llama.cpp/kev",
+		local: "mtplx/flash",
+		cloud: "opencode-go/deepseek",
+	});
+	assert.equal(patch.autoSelect, true);
+	assert.equal((patch.classifier as Record<string, unknown>).model, "llama.cpp/kev");
+	assert.deepEqual((patch.catalog as Record<string, unknown>).local, ["mtplx/flash"]);
+	assert.deepEqual((patch.catalog as Record<string, unknown>).cloud, ["opencode-go/deepseek"]);
+});
+
+test("buildInitPatch omits classifier when none chosen", () => {
+	const patch = buildInitPatch({ autoSelect: false });
+	assert.equal(patch.autoSelect, false);
+	assert.equal(patch.classifier, undefined);
+	assert.equal(patch.catalog, undefined);
 });
 
 test("buildStatusLines surfaces the last classifier failure", () => {

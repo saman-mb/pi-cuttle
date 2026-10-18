@@ -153,6 +153,46 @@ export function oneLine(text: string, max = 160): string {
 	return flat.length > max ? flat.slice(0, max - 1) + "\u2026" : flat;
 }
 
+export function buildInitPatch(selections: {
+	autoSelect: boolean;
+	classifier?: string;
+	local?: string;
+	cloud?: string;
+}): Record<string, unknown> {
+	const patch: Record<string, unknown> = { autoSelect: selections.autoSelect };
+	if (selections.classifier) patch.classifier = { model: selections.classifier };
+	if (selections.local || selections.cloud) {
+		patch.catalog = {
+			...(selections.local ? { local: [selections.local] } : {}),
+			...(selections.cloud ? { cloud: [selections.cloud] } : {}),
+		};
+	}
+	return patch;
+}
+
+async function init(rt: RouterRuntime, ctx: ExtensionCommandContext): Promise<void> {
+	const enable = await ctx.ui.confirm("Enable auto-routing for new sessions?", "cuttle will select local/cloud automatically.");
+	if (enable === undefined) return;
+
+	const classifiers = ctx.modelRegistry
+		.getModelsOfType("classifier")
+		.map((m) => `${m.provider}/${m.id}`);
+	const chats = ctx.modelRegistry.getAvailable().map((m) => `${m.provider}/${m.id}`);
+
+	const classifier = classifiers.length > 0 ? await ctx.ui.select("Classifier model", classifiers) : undefined;
+	const local = chats.length > 0 ? await ctx.ui.select("Local model", chats) : undefined;
+	const cloud = chats.length > 0 ? await ctx.ui.select("Cloud model", chats) : undefined;
+
+	const patch = buildInitPatch({
+		autoSelect: enable === true,
+		classifier: classifier ?? undefined,
+		local: local ?? undefined,
+		cloud: cloud ?? undefined,
+	});
+	const path = refresh(rt, patch);
+	ctx.ui.notify(`cuttle: wrote config to ${path}`, "info");
+}
+
 /** Pure status rendering; pinned by tests so the failure line cannot drift (#53). */
 export function buildStatusLines(input: {
 	rt: RouterRuntime;
@@ -238,6 +278,7 @@ export function registerCuttleCommand(pi: ExtensionAPI, rt: RouterRuntime, loade
 				);
 				return;
 			}
+			if (sub === "init") return init(rt, ctx);
 			if (sub === "models") return editModels(rt, ctx);
 			if (sub === "policy") return editPolicy(rt, ctx);
 			if (sub === "limit") return editLocalLimit(rt, ctx);
