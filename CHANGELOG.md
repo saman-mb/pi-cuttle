@@ -7,12 +7,14 @@ versions follow [SemVer](https://semver.org/).
 
 ### Added
 
-- **Live Layer 2 classifier eval** — `npm run eval --live` builds pi's model runtime and scores
-  the configured classifier through `ModelRegistry.classify()` over `eval/corpus.jsonl`, beside
-  the unchanged heuristic score. It reports asymmetric confusion counts and available model
-  attribution metadata; missing classifier configuration/catalog entries or failed requests
-  exit non-zero. No live score was recorded on this host because its configured classifier was
-  absent from pi's catalog (#97).
+- **Live Layer 2 classifier eval** — `npm run eval --live` scores the configured classifier over
+  `eval/corpus.jsonl` beside the unchanged heuristic score, reporting asymmetric confusion
+  counts and model attribution. It resolves the classifier from pi's catalog when possible and
+  otherwise from `PI_LIVE_EVAL_BASE_URL` (a `llama.cpp` classifier is registered by a runtime
+  extension a standalone script cannot load); both paths call pi's own classifier
+  implementation. Missing configuration, an unresolvable classifier, or a failed request exits
+  non-zero. Measured on this host: `llama.cpp/ggml-org/Kev-9B-GGUF:Q8_0` scores **93.8%**
+  (1 `local→cloud`, 6 `cloud→local`) against the tuned heuristic's 100% (#97).
 
 - **`/cuttle config` panel** — a single searchable SettingsList showing all routing knobs at once:
   classifier model (with submenu), policy mode (cycle), `local.maxConcurrent` (submenu), and

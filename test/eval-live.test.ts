@@ -11,7 +11,12 @@ import type {
 
 import { buildQuestions } from "../src/classifier.ts";
 import { DEFAULTS } from "../src/config.ts";
-import { formatLiveReport, runLiveEval, type LiveClassifierRegistry } from "../eval/live.ts";
+import {
+	directClassifierModel,
+	formatLiveReport,
+	runLiveEval,
+	type LiveClassifierRegistry,
+} from "../eval/live.ts";
 import type { EvalEntry } from "../eval/score.ts";
 
 const model = {
@@ -112,4 +117,20 @@ test("live eval fails clearly instead of using the heuristic on a failed classif
 		}),
 		/classifier request failed.*fetch failed.*host is reachable/,
 	);
+});
+
+/**
+ * The direct path exists because a `llama.cpp` classifier is registered by a runtime
+ * extension, so a standalone script cannot resolve it from pi's catalog even though pi
+ * itself does. If this descriptor drifts from pi's provider contract, `npm run eval --live`
+ * silently measures the wrong thing.
+ */
+test("the direct fallback builds a descriptor pi's llama-cpp classifier accepts (#97)", () => {
+	const model = directClassifierModel({ provider: "llama.cpp", id: "org/model:Q8_0" }, "http://127.0.0.1:9931/v1");
+	assert.equal(model.type, "classifier");
+	assert.equal(model.api, "llama-cpp-classify");
+	assert.equal(model.provider, "llama.cpp");
+	assert.equal(model.id, "org/model:Q8_0");
+	assert.equal(model.baseUrl, "http://127.0.0.1:9931/v1");
+	assert.ok(model.contextWindow > 0);
 });

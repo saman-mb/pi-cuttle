@@ -15,6 +15,7 @@ import type {
 	ClassifierResult,
 	ModelsClassifierOptions,
 } from "@earendil-works/pi-ai";
+import { classify } from "@earendil-works/pi-ai/api/llama-cpp-classify";
 
 import { buildQuestions, heuristicScore, splitRef } from "../src/classifier.ts";
 import { DEFAULTS, loadConfig } from "../src/config.ts";
@@ -148,17 +149,53 @@ export function formatLiveReport(report: LiveEvalReport): string {
 	].join("\n");
 }
 
-/** Construct pi's runtime from the same user auth/models files used by pi itself. */
-export async function runLiveEvalCli(): Promise<void> {
-	try {
-		const { config } = loadConfig(process.cwd());
-		const ref = config.classifier.model;
-		if (!ref) {
-			throw new Error("no classifier is configured; set classifier.model in pi-cuttle.json before running the live eval");
-		}
-		const parsedRef = splitRef(ref);
-		if (!parsedRef) throw new Error(`invalid classifier ref ${ref}; expected provider/model`);
+/**
+ * Build a classifier descriptor for a ref when pi's catalog does not expose it.
+ *
+ * pi resolves `llama.cpp` classifiers from a provider that is registered at runtime
+ * (by an extension), so a standalone script that constructs pi's runtime from the user's
+ * `auth.json`/`models.json` cannot see it. The classification itself still runs through
+ * pi's own implementation (see `directClassifierRegistry`); only the descriptor is local.
+ */
+export function directClassifierModel(
+	parsedRef: { provider: string; id: string },
+	baseUrl: string,
+): ClassifierModel<ClassifierApi> {
+	return {
+		type: "classifier",
+		provider: parsedRef.provider,
+		id: parsedRef.id,
+		name: parsedRef.id,
+		api: "llama-cpp-classify",
+		baseUrl,
+		input: ["text"],
+		contextWindow: 32768,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	};
+}
 
+/**
+ * A registry backed by pi's own llama.cpp classifier implementation.
+ *
+ * This is the fidelity guarantee for Layer 2: the request protocol is pi's, not a
+ * re-implementation, so the score measures the model pi actually runs.
+ */
+export function directClassifierRegistry(): LiveClassifierRegistry {
+	return { classify: (model, context, options) => classify(model, context, options) };
+}
+
+/** Resolve the classifier descriptor, preferring pi's catalog, falling back to the direct path. */
+async function resolveClassifier(ref: string): Promise<{
+	parsedRef: { provider: string; id: string };
+	model: ClassifierModel<ClassifierApi>;
+	registry: LiveClassifierRegistry;
+	source: "pi catalog" | "direct";
+}> {
+	const parsedRef = splitRef(ref);
+	if (!parsedRef) throw new Error(`invalid classifier ref ${ref}; expected provider/model`);
+
+	// Prefer pi's catalog when it resolves the classifier, so auth/headers come from pi.
+	try {
 		const agentDir = getAgentDir();
 		const runtime = await ModelRuntime.create({
 			authPath: join(agentDir, "auth.json"),
@@ -167,14 +204,40 @@ export async function runLiveEvalCli(): Promise<void> {
 		});
 		const registry = new ModelRegistry(runtime);
 		const model = registry.findOfType("classifier", parsedRef.provider, parsedRef.id);
-		if (!model) {
-			throw new Error(
-				`classifier ${ref} is not in pi's classifier catalog; add it to pi's models.json or use a classifier listed by pi`,
-			);
+		if (model) return { parsedRef, model, registry, source: "pi catalog" };
+	} catch {
+		// Fall through to the direct path; the catalog runtime is unavailable here.
+	}
+
+	const baseUrl = process.env.PI_LIVE_EVAL_BASE_URL;
+	if (!baseUrl) {
+		throw new Error(
+			`classifier ${ref} is not in pi's classifier catalog on this host, and PI_LIVE_EVAL_BASE_URL is unset.\n` +
+				`Set PI_LIVE_EVAL_BASE_URL to the classifier host's OpenAI-compatible base URL ` +
+				`(for example http://127.0.0.1:9931/v1), or add the classifier to pi's models.json.`,
+		);
+	}
+	return {
+		parsedRef,
+		model: directClassifierModel(parsedRef, baseUrl),
+		registry: directClassifierRegistry(),
+		source: "direct",
+	};
+}
+
+/** Construct pi's runtime from the same user auth/models files used by pi itself. */
+export async function runLiveEvalCli(): Promise<void> {
+	try {
+		const { config } = loadConfig(process.cwd());
+		const ref = config.classifier.model;
+		if (!ref) {
+			throw new Error("no classifier is configured; set classifier.model in pi-cuttle.json before running the live eval");
 		}
 
+		const { model, registry, source } = await resolveClassifier(ref);
 		const report = await runLiveEval({ ref, model, registry, config });
 		console.log(formatLiveReport(report));
+		console.log(`\nclassifier resolution: ${source}${source === "direct" ? ` (${model.baseUrl})` : ""}`);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		console.error(`Live classifier eval failed: ${message}`);
