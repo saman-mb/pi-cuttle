@@ -12,7 +12,7 @@ work?** Scores are `node --experimental-strip-types eval/run.ts`.
 
 | Classifier | Model + digest | Accuracy | local -> cloud | cloud -> local | Date |
 |---|---|---|---|---|---|
-| _(not yet measured — see #97)_ | — | — | — | — | — |
+| `llama.cpp/ggml-org/Kev-9B-GGUF:Q8_0` | pi classifier catalog entry missing on this host; version/digest not exposed | not recorded (live eval could not resolve the model) | — | — | 2026-10-18 |
 
 **Read this honestly:** the improved heuristic was tuned against this corpus, so 100%
 is a regression benchmark, not evidence of generalisation to unseen prompts. The CI
@@ -22,10 +22,13 @@ ledger, a bug report, or your own sessions) before changing heuristics, and reco
 before/after here. #98 adds a holdout set so the number reflects generalisation rather
 than tuning.
 
-**The decision model is not measured yet.** `eval/pi-cuttle-provider.ts` runs with
-`classifier.model: undefined` (the heuristic), so neither the fixtures nor `npm run eval`
-exercise the classifier. The table above is deliberately empty until #97 lands; a
-classifier number on this corpus would otherwise be self-graded too.
+`eval/pi-cuttle-provider.ts` runs with `classifier.model: undefined` (the heuristic), so
+neither the Layer 1 fixtures nor `npm run eval` exercise the classifier. Layer 2 is available
+through `npm run eval --live`, but a live classifier score is **not recorded**: on 2026-10-18
+the configured ref `llama.cpp/ggml-org/Kev-9B-GGUF:Q8_0` was not present in pi's classifier
+catalog on this host. No accuracy or confusion counts are inferred. pi's `ClassifierModel`
+catalog type does not expose a weight digest; the live report prints version/digest fields
+when provided, plus the exact configured ref and resolved registry model id/API.
 
 The asymmetry that matters: `cloud -> local` risks *quality* (a weak model on a hard
 task), `local -> cloud` only risks *money*. Mixed signals lean cloud for that reason.

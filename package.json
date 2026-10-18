@@ -57,6 +57,7 @@
   "scripts": {
     "test": "node --experimental-strip-types --test test/*.test.ts",
     "eval": "node --experimental-strip-types eval/run.ts",
+    "eval:live": "node --experimental-strip-types eval/run.ts --live",
     "eval:convert": "node --experimental-strip-types eval/convert-corpus.ts",
     "eval:export-misroutes": "node --experimental-strip-types eval/export-misroutes.ts",
     "eval:convert-misroutes": "node --experimental-strip-types eval/convert-misroutes.ts",

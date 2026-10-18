@@ -20,18 +20,23 @@ import { formatResult, parseCorpus, scoreCorpus } from "./score.ts";
 /** Heuristic accuracy floor; raise it when the heuristic improves. */
 export const ACCURACY_FLOOR = 0.8;
 
-const here = dirname(fileURLToPath(import.meta.url));
-const corpusPath = join(here, "corpus.jsonl");
-const entries = parseCorpus(readFileSync(corpusPath, "utf8"));
-const threshold = DEFAULTS.policy.threshold;
+if (process.argv.includes("--live") || process.env.npm_config_live === "true") {
+	const { runLiveEvalCli } = await import("./live.ts");
+	await runLiveEvalCli();
+} else {
+	const here = dirname(fileURLToPath(import.meta.url));
+	const corpusPath = join(here, "corpus.jsonl");
+	const entries = parseCorpus(readFileSync(corpusPath, "utf8"));
+	const threshold = DEFAULTS.policy.threshold;
 
-const result = scoreCorpus(entries, (prompt) => {
-	const { score } = heuristicScore(prompt);
-	return { tier: score >= threshold ? "cloud" : "local", score };
-});
+	const result = scoreCorpus(entries, (prompt) => {
+		const { score } = heuristicScore(prompt);
+		return { tier: score >= threshold ? "cloud" : "local", score };
+	});
 
-console.log(formatResult(result));
-if (result.accuracy < ACCURACY_FLOOR) {
-	console.error(`\nheuristic accuracy ${(result.accuracy * 100).toFixed(1)}% is below the ${ACCURACY_FLOOR * 100}% floor`);
-	process.exit(1);
+	console.log(formatResult(result));
+	if (result.accuracy < ACCURACY_FLOOR) {
+		console.error(`\nheuristic accuracy ${(result.accuracy * 100).toFixed(1)}% is below the ${ACCURACY_FLOOR * 100}% floor`);
+		process.exit(1);
+	}
 }
