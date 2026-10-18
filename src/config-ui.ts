@@ -35,7 +35,7 @@ export const STATE = {
 	EMPTY: "EMPTY",
 	SHADOWED: "SHADOWED: project file",
 	UNRESOLVED: "UNRESOLVED",
-	SAVED: "SAVED; NEXT TURN",
+	SAVED: "SAVED",
 	WRITE_FAILED: "WRITE FAILED",
 	NO_CHANGES: "NO CHANGES",
 } as const;
@@ -266,7 +266,7 @@ export function buildNonTuiText(input: {
 
 	lines.push("");
 	lines.push("Edit ~/.pi/agent/pi-cuttle.json; project sections in .pi/pi-cuttle.json override user sections.");
-	lines.push("Changes apply from the next user turn.");
+	lines.push('Changes apply from the next routing decision: a new session, or the next user turn when policy.reclassify is "turn".');
 
 	return lines.join("\n");
 }

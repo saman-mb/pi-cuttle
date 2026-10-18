@@ -492,7 +492,10 @@ export async function showConfigPanel(rt: RouterRuntime, ctx: ExtensionCommandCo
 		);
 
 		const result = await ctx.ui.custom((_tui, _theme, _keybindings, done) => {
-			closePanel = () => done(undefined);
+			// Complete with a distinct sentinel, not `undefined`: `undefined` is also what
+			// `custom()` returns when there is no custom UI, and the fallback below treats it as
+			// "unavailable". Closing the panel must not print the headless report.
+			closePanel = () => done("closed");
 			return settingsList;
 		});
 		if (result === undefined) {
