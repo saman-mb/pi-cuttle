@@ -62,9 +62,9 @@ export class LangFuseClient {
 		this.auth = `Basic ${Buffer.from(`${cfg.publicKey}:${cfg.secretKey}`).toString("base64")}`;
 	}
 
-	/** POST one trace. A 409 means the trace already exists, which is harmless. */
-	private async post(body: unknown): Promise<void> {
-		const response = await fetch(`${this.baseUrl}/api/public/traces`, {
+	/** POST one payload. A 409 means it already exists, which is harmless. */
+	private async post(path: string, body: unknown): Promise<void> {
+		const response = await fetch(`${this.baseUrl}${path}`, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
@@ -73,11 +73,11 @@ export class LangFuseClient {
 			body: JSON.stringify(body),
 		});
 		if (response.ok || response.status === 409) return;
-		throw new Error(`LangFuse trace failed: ${response.status} ${await response.text()}`);
+		throw new Error(`LangFuse ${path} failed: ${response.status} ${await response.text()}`);
 	}
 
 	async trace(decision: RoutingTrace): Promise<void> {
-		await this.post({
+		await this.post("/api/public/traces", {
 			id: decision.traceId,
 			name: decision.name,
 			metadata: {
@@ -104,7 +104,7 @@ export class LangFuseClient {
 	 * fall-through docs/SUBAGENTS.md warns about observable instead of silent.
 	 */
 	async bypass(observation: ChildBypassObservation): Promise<void> {
-		await this.post({
+		await this.post("/api/public/traces", {
 			id: observation.traceId,
 			name: observation.name ?? "pi-cuttle child bypass",
 			metadata: {
@@ -116,6 +116,20 @@ export class LangFuseClient {
 				reason: observation.reason,
 			},
 			timestamp: new Date().toISOString(),
+		});
+	}
+
+	/**
+	 * Ingest one score against a trace (#132). Hand-rolled like the rest of the client: no SDK.
+
+	 * Best-effort by contract — callers fire and forget, and a failure here must never reach a turn.
+	 */
+	async score(entry: { traceId: string; name: string; value: boolean | number | string; dataType: string }): Promise<void> {
+		await this.post("/api/public/scores", {
+			traceId: entry.traceId,
+			name: entry.name,
+			value: entry.value,
+			dataType: entry.dataType,
 		});
 	}
 
