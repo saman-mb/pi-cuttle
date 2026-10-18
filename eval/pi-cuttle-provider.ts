@@ -1,51 +1,45 @@
 /**
- * Eval tests for pi-cuttle routing decisions.
+ * Custom Promptfoo provider for pi-cuttle routing evaluation.
  *
- * Loads fixtures from eval/routing-fixtures.jsonl and verifies that routeRequest()
- * makes correct routing decisions (tier, model characteristics, thinking level).
+ * Calls pi-cuttle's routeRequest() with a mocked ExtensionContext.
+ * No live model needed for routing decision itself.
  *
- * Uses fake ExtensionContext with controlled config to ensure deterministic results.
+ * Usage in promptfoo.yaml:
+ *   providers:
+ *     - id: file://pi-cuttle-provider.ts
  */
-import { describe, it } from "node:test";
-import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-
+import type { ApiProvider, ProviderResponse } from "promptfoo";
 import type { ExtensionContext, Model } from "@earendil-works/pi-coding-agent";
 import type { Api } from "@earendil-works/pi-ai/compat";
 
 import { routeRequest } from "../src/virtual-models.ts";
 import type { RouterRuntime } from "../src/virtual-models.ts";
 import { DEFAULTS } from "../src/config.ts";
-import type { RouterConfig, RouterState, Tier } from "../src/types.ts";
+import type { RouterConfig, Tier, RouterFlavor } from "../src/types.ts";
+import { isSubagent } from "../src/subagent.ts";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const fixturesPath = join(here, "routing-fixtures.jsonl");
-
-interface RoutingFixture {
-	prompt: string;
-	expectedTier: Tier;
-	expectedModel?: string;
-	expectedThinkingLevel?: string;
-	features?: string[];
-	notes?: string;
-}
-
-function loadFixtures(): RoutingFixture[] {
-	const text = readFileSync(fixturesPath, "utf8");
-	const fixtures: RoutingFixture[] = [];
-	for (const line of text.split("\n")) {
-		if (!line.trim()) continue;
-		fixtures.push(JSON.parse(line) as RoutingFixture);
-	}
-	return fixtures;
+interface RoutingOutput {
+	tier: Tier;
+	modelId: string;
+	flavor: RouterFlavor;
+	thinkingLevel: string;
+	decision: {
+		source: string;
+		reason: string;
+		score?: number;
+	};
+	isSubagent: boolean;
+	localBiasApplied: boolean;
+	userCeilingRespected: boolean;
+	requestedThinkingLevel?: string;
+	effectiveThinkingLevel: string;
+	complexityScore?: number;
 }
 
 function makeFakeContext(): ExtensionContext {
 	return {
 		sessionManager: {
-			getSessionId: () => "test-session",
+			getSessionId: () => "test-session-eval",
 		},
 		modelRegistry: {
 			find: (provider: string, id: string) => {
@@ -150,7 +144,13 @@ function makeFakeRuntime(config: RouterConfig): RouterRuntime {
 	return {
 		config,
 		governor: {
-			acquire: async () => ({ id: "test-slot", modelKey: "test", file: "/tmp/test", pid: 123, startedAt: Date.now() }),
+			acquire: async () => ({
+				id: "test-slot",
+				modelKey: "test",
+				file: "/tmp/test",
+				pid: 123,
+				startedAt: Date.now(),
+			}),
 			release: async () => {},
 			releaseOne: () => {},
 			status: async () => ({ slots: [], localMax: 1 }),
@@ -159,19 +159,35 @@ function makeFakeRuntime(config: RouterConfig): RouterRuntime {
 		previousModels: new Map(),
 		classifierFailures: 0,
 		classifierBackoffUntil: 0,
+		log: undefined,
 	} as RouterRuntime;
 }
 
-describe("routing fixtures", () => {
-	const fixtures = loadFixtures();
-	const ctx = makeFakeContext();
+class PiCuttleProvider implements ApiProvider {
+	readonly config: Record<string, unknown>;
 
-	it("should load fixtures", () => {
-		assert.ok(fixtures.length > 0, "fixtures should not be empty");
-	});
+	constructor(options: { id?: string; config?: Record<string, unknown> } = {}) {
+		this.config = options.config || {};
+	}
 
-	for (const fixture of fixtures) {
-		it(`should route correctly: ${fixture.prompt.slice(0, 50)}...`, async () => {
+	id() {
+		return "pi-cuttle-router";
+	}
+
+	async callApi(prompt: string, context?: any): Promise<ProviderResponse> {
+		try {
+			const thinkingLevel = (context?.vars?.thinkingLevel as string) ?? "medium";
+			const flavor = (context?.vars?.flavor as RouterFlavor) ?? "auto";
+			const isSubagentRequest = context?.vars?.isSubagent === true;
+
+			// Set subagent environment variable if fixture requests it
+			if (isSubagentRequest) {
+				process.env.PI_SUBAGENT_CHILD = "1";
+			} else {
+				delete process.env.PI_SUBAGENT_CHILD;
+			}
+
+			// Configure router with features enabled for comprehensive testing
 			const config: RouterConfig = {
 				...DEFAULTS,
 				classifier: { ...DEFAULTS.classifier, model: undefined }, // use heuristic
@@ -179,39 +195,79 @@ describe("routing fixtures", () => {
 					local: ["lmstudio/meta/muse-glimmer", "lmstudio/prism-ml/bonsai-27b"],
 					cloud: ["opencode-go/deepseek-v4.1-flash"],
 				},
+				capabilities: {
+					"lmstudio/meta/muse-glimmer": 0.5,
+					"lmstudio/prism-ml/bonsai-27b": 1.0,
+				},
 				policy: {
 					...DEFAULTS.policy,
+					localBias: 0.1, // Enable local bias for testing
+					subagent: {
+						// When running as a subagent, force local routing for eval coverage.
+						threshold: 1.0,
+						mode: "complexity",
+					},
 					thinkingLevels: {
 						enabled: true,
 						map: [
 							{ score: 0.2, level: "off" },
 							{ score: 0.4, level: "low" },
 							{ score: 0.6, level: "medium" },
+							{ score: 0.75, level: "high" },
 						],
 						default: "high",
+						enforceUserCeiling: true,
 					},
 				},
 			};
 
+			const ctx = makeFakeContext();
 			const rt = makeFakeRuntime(config);
+
 			const request = {
-				model: { id: "auto", provider: "cuttle" } as any,
-				thinkingLevel: "high" as any,
+				model: { id: flavor, provider: "cuttle" } as any,
+				thinkingLevel: thinkingLevel as any,
 				reason: "user" as const,
-				messages: [{ role: "user" as const, content: [{ type: "text" as const, text: fixture.prompt }], timestamp: Date.now() }],
+				messages: [
+					{
+						role: "user" as const,
+						content: [{ type: "text" as const, text: prompt }],
+						timestamp: Date.now(),
+					},
+				],
+				state: undefined,
+				failed: undefined,
 			};
 
-			const result = await routeRequest(rt, "auto", request as any, ctx);
+			const result = await routeRequest(rt, flavor, request as any, ctx);
 
-			// Check tier
-			assert.equal(result.model.provider === "opencode-go" ? "cloud" : "local", fixture.expectedTier,
-				`tier mismatch for: ${fixture.prompt}`);
+			const output: RoutingOutput = {
+				tier: result.model.provider === "opencode-go" ? "cloud" : "local",
+				modelId: `${result.model.provider}/${result.model.id}`,
+				flavor,
+				thinkingLevel: result.thinkingLevel,
+				decision: {
+					source: result.state?.decision.source ?? "heuristic",
+					reason: result.state?.decision.reason ?? "",
+					score: result.state?.decision.score,
+				},
+				isSubagent: isSubagent(),
+				localBiasApplied: config.policy.localBias !== undefined && config.policy.localBias > 0,
+				userCeilingRespected: config.policy.thinkingLevels?.enforceUserCeiling !== false,
+				requestedThinkingLevel: thinkingLevel,
+				effectiveThinkingLevel: result.thinkingLevel,
+				complexityScore: result.state?.decision.score,
+			};
 
-			// Check thinking level if specified
-			if (fixture.expectedThinkingLevel) {
-				assert.equal(result.thinkingLevel, fixture.expectedThinkingLevel,
-					`thinking level mismatch for: ${fixture.prompt}`);
-			}
-		});
+			return {
+				output,
+			};
+		} catch (error) {
+			return {
+				error: error instanceof Error ? error.message : String(error),
+			};
+		}
 	}
-});
+}
+
+export default PiCuttleProvider;

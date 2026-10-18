@@ -4,6 +4,9 @@ dist/
 .DS_Store
 .env
 
+# Promptfoo eval output (generated per run).
+eval/results.json
+
 # Runtime state written by the local governor (never commit).
 .slots/
 *.slot.json

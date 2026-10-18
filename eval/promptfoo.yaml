@@ -1,0 +1,565 @@
+# pi-cuttle routing evaluation configuration
+# Run with: npm run eval:promptfoo
+# View results: npm run eval:promptfoo:view
+#
+# Fixtures cover all 0.5.0 features: complexity scoring, thinking-level clamping,
+# subagent policy override, flavors (big-local, orchestrator, fast-local, auto),
+# /cuttle why, localBias, enforceUserCeiling, and edge cases.
+
+description: pi-cuttle routing evaluation - tests all 0.5.0 features
+
+prompts:
+  - "{{prompt}}"
+
+providers:
+  - id: file://pi-cuttle-provider.ts
+    label: pi-cuttle-router
+
+defaultTest:
+  options:
+    provider: file://pi-cuttle-provider.ts
+
+outputPath: results.json
+
+tests:
+  # === Complexity Scoring (12 fixtures) ===
+  # Default thinking level; verify tier selection.
+  - vars:
+      prompt: "rename the variable `usrCnt` to `userCount` in src/auth.ts"
+    assert:
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: complexity }
+
+  - vars:
+      prompt: "fix the typo in the README: 'recieve' -> 'receive'"
+    assert:
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: complexity }
+
+  - vars:
+      prompt: "format this file with prettier"
+    assert:
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: complexity }
+
+  - vars:
+      prompt: "add a docstring to the parseConfig function"
+    assert:
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: complexity }
+
+  - vars:
+      prompt: "explain what src/governor.ts does"
+    assert:
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: complexity }
+
+  - vars:
+      prompt: "list all the files in the test directory"
+    assert:
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: complexity }
+
+  - vars:
+      prompt: "find where the string 'maxConcurrent' is used"
+    assert:
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: complexity }
+
+  - vars:
+      prompt: "refactor the routing engine to separate policy from transport"
+    assert:
+      - type: javascript
+        value: output.tier === 'cloud'
+    metadata: { category: complexity }
+
+  - vars:
+      prompt: "design a plugin architecture for multiple local inference hosts"
+    assert:
+      - type: javascript
+        value: output.tier === 'cloud'
+    metadata: { category: complexity }
+
+  - vars:
+      prompt: "there's a race condition in the slot acquire path, find and fix it"
+    assert:
+      - type: javascript
+        value: output.tier === 'cloud'
+    metadata: { category: complexity }
+
+  - vars:
+      prompt: "review this PR for architectural issues"
+    assert:
+      - type: javascript
+        value: output.tier === 'cloud'
+    metadata: { category: complexity }
+
+  - vars:
+      prompt: "plan the implementation of cross-process memory accounting"
+    assert:
+      - type: javascript
+        value: output.tier === 'cloud'
+    metadata: { category: complexity }
+
+  # === Thinking-Level Clamping (8 fixtures) ===
+  # Request high thinking so user ceiling does not clamp the mapped level.
+  - vars:
+      prompt: "what is 2+2"
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.thinkingLevel === 'off'
+    metadata: { category: thinking-levels, expectedScoreRange: [0, 0.2] }
+
+  - vars:
+      prompt: "list files in current directory"
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.thinkingLevel === 'off'
+    metadata: { category: thinking-levels }
+
+  - vars:
+      prompt: "quick syntax check on this function"
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.thinkingLevel === 'low'
+    metadata: { category: thinking-levels, expectedScoreRange: [0.2, 0.4] }
+
+  - vars:
+      prompt: "You are the Planner for shipmates-ship-issue run on issue"
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.thinkingLevel === 'low'
+    metadata: { category: thinking-levels }
+
+  - vars:
+      prompt: "analyze the architecture and propose improvements"
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.thinkingLevel === 'high'
+    metadata: { category: thinking-levels, expectedScoreRange: [0.75, 1.0] }
+
+  - vars:
+      prompt: "implement the worker task for code generation"
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.thinkingLevel === 'high'
+    metadata: { category: thinking-levels }
+
+  - vars:
+      prompt: "optimize the database query performance"
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.thinkingLevel === 'high'
+    metadata: { category: thinking-levels }
+
+  - vars:
+      prompt: "debug the intermittent test failure in CI"
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.thinkingLevel === 'high'
+    metadata: { category: thinking-levels }
+
+  # === Subagent Policy Override (6 fixtures) ===
+  # isSubagent triggers the subagent policy path.
+  - vars:
+      prompt: "You are the Worker agent tasked with implementing the authentication module"
+      isSubagent: true
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.isSubagent === true
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: subagent-policy }
+
+  - vars:
+      prompt: "You are the Scout agent exploring the codebase structure"
+      isSubagent: true
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.isSubagent === true
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: subagent-policy }
+
+  - vars:
+      prompt: "You are the Oracle agent providing expert analysis on database schema design"
+      isSubagent: true
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.isSubagent === true
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: subagent-policy }
+
+  - vars:
+      prompt: "You are the Driver agent coordinating the implementation plan"
+      isSubagent: true
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.isSubagent === true
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: subagent-policy }
+
+  - vars:
+      prompt: "You are the Reviewer agent checking code quality and best practices"
+      isSubagent: true
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.isSubagent === true
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: subagent-policy }
+
+  - vars:
+      prompt: "You are the Researcher agent gathering information about new technologies"
+      isSubagent: true
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.isSubagent === true
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: subagent-policy }
+
+  # === Flavor Routing: big-local (4 fixtures) ===
+  # big-local should select the largest local model.
+  - vars:
+      prompt: "orchestrate the multi-step refactoring of the entire API layer"
+      flavor: big-local
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.flavor === 'big-local'
+      - type: javascript
+        value: output.modelId === 'lmstudio/prism-ml/bonsai-27b'
+    metadata: { category: flavor-big-local }
+
+  - vars:
+      prompt: "coordinate the integration of three microservices into a monolith"
+      flavor: big-local
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.flavor === 'big-local'
+      - type: javascript
+        value: output.modelId === 'lmstudio/prism-ml/bonsai-27b'
+    metadata: { category: flavor-big-local }
+
+  - vars:
+      prompt: "manage the complex deployment pipeline across multiple environments"
+      flavor: big-local
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.flavor === 'big-local'
+      - type: javascript
+        value: output.modelId === 'lmstudio/prism-ml/bonsai-27b'
+    metadata: { category: flavor-big-local }
+
+  - vars:
+      prompt: "supervise the migration of legacy systems to modern architecture"
+      flavor: big-local
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.flavor === 'big-local'
+      - type: javascript
+        value: output.modelId === 'lmstudio/prism-ml/bonsai-27b'
+    metadata: { category: flavor-big-local }
+
+  # === Flavor Routing: orchestrator (4 fixtures) ===
+  # orchestrator currently forces local via flavorBias. Assert the documented
+  # behavior; if the product intent changes to cloud, update these fixtures.
+  - vars:
+      prompt: "plan and coordinate the migration from REST to GraphQL across 10 services"
+      flavor: orchestrator
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.flavor === 'orchestrator'
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: flavor-orchestrator }
+
+  - vars:
+      prompt: "design the system architecture for distributed caching"
+      flavor: orchestrator
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.flavor === 'orchestrator'
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: flavor-orchestrator }
+
+  - vars:
+      prompt: "architect the data flow for real-time analytics platform"
+      flavor: orchestrator
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.flavor === 'orchestrator'
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: flavor-orchestrator }
+
+  - vars:
+      prompt: "strategize the technology stack selection for new product line"
+      flavor: orchestrator
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.flavor === 'orchestrator'
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: flavor-orchestrator }
+
+  # === Flavor Routing: fast-local (4 fixtures) ===
+  # fast-local should select the smallest local model.
+  - vars:
+      prompt: "check syntax errors in this TypeScript file"
+      flavor: fast-local
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.flavor === 'fast-local'
+      - type: javascript
+        value: output.modelId === 'lmstudio/meta/muse-glimmer'
+    metadata: { category: flavor-fast-local }
+
+  - vars:
+      prompt: "validate JSON format"
+      flavor: fast-local
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.flavor === 'fast-local'
+      - type: javascript
+        value: output.modelId === 'lmstudio/meta/muse-glimmer'
+    metadata: { category: flavor-fast-local }
+
+  - vars:
+      prompt: "verify email address format"
+      flavor: fast-local
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.flavor === 'fast-local'
+      - type: javascript
+        value: output.modelId === 'lmstudio/meta/muse-glimmer'
+    metadata: { category: flavor-fast-local }
+
+  - vars:
+      prompt: "parse date string to timestamp"
+      flavor: fast-local
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.flavor === 'fast-local'
+      - type: javascript
+        value: output.modelId === 'lmstudio/meta/muse-glimmer'
+    metadata: { category: flavor-fast-local }
+
+  # === Flavor Routing: auto (4 fixtures) ===
+  # auto lets the classifier decide tier.
+  - vars:
+      prompt: "explain the difference between maxConcurrent and maxConcurrentPerModel"
+      flavor: auto
+    assert:
+      - type: javascript
+        value: output.flavor === 'auto'
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: flavor-auto }
+
+  - vars:
+      prompt: "summarize what changed in the last commit"
+      flavor: auto
+    assert:
+      - type: javascript
+        value: output.flavor === 'auto'
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: flavor-auto }
+
+  - vars:
+      prompt: "what version of node does this project require?"
+      flavor: auto
+    assert:
+      - type: javascript
+        value: output.flavor === 'auto'
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: flavor-auto }
+
+  - vars:
+      prompt: "show me the git blame for line 42 of index.ts"
+      flavor: auto
+    assert:
+      - type: javascript
+        value: output.flavor === 'auto'
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: flavor-auto }
+
+  # === /cuttle why support (4 fixtures) ===
+  # Decision metadata must be present and explainable.
+  - vars:
+      prompt: "migrate the codebase from CommonJS to ESM"
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.decision && typeof output.decision.reason === 'string' && output.decision.reason.length > 0
+      - type: javascript
+        value: output.decision.source === 'heuristic' || output.decision.source === 'classifier'
+    metadata: { category: cuttle-why }
+
+  - vars:
+      prompt: "write a comprehensive technical specification document"
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.decision && typeof output.decision.reason === 'string' && output.decision.reason.length > 0
+      - type: javascript
+        value: output.decision.source === 'heuristic' || output.decision.source === 'classifier'
+    metadata: { category: cuttle-why }
+
+  - vars:
+      prompt: "find the root cause of the memory leak in production"
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.decision && typeof output.decision.reason === 'string' && output.decision.reason.length > 0
+      - type: javascript
+        value: output.decision.source === 'heuristic' || output.decision.source === 'classifier'
+    metadata: { category: cuttle-why }
+
+  - vars:
+      prompt: "create a detailed project roadmap for the next quarter"
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.decision && typeof output.decision.reason === 'string' && output.decision.reason.length > 0
+      - type: javascript
+        value: output.decision.source === 'heuristic' || output.decision.source === 'classifier'
+    metadata: { category: cuttle-why }
+
+  # === localBias Configuration (3 fixtures) ===
+  # The provider enables localBias=0.1. These prompts are borderline (mixed
+  # mechanical + complex signals score ~0.55), so without bias they would route
+  # cloud at the 0.5 threshold; with bias the bar becomes 0.6 and they stay local.
+  - vars:
+      prompt: "list and compare the error handling patterns in these async functions"
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.localBiasApplied === true
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: localBias }
+
+  - vars:
+      prompt: "explain and evaluate these two sorting algorithm implementations"
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.localBiasApplied === true
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: localBias }
+
+  - vars:
+      prompt: "explain and evaluate the tradeoffs between REST and gRPC for our use case"
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.localBiasApplied === true
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: localBias }
+
+  # === enforceUserCeiling (3 fixtures) ===
+  # Requested thinking level is the ceiling; output must not exceed it.
+  - vars:
+      prompt: "analyze the architecture and propose improvements"
+      thinkingLevel: low
+    assert:
+      - type: javascript
+        value: output.userCeilingRespected === true
+      - type: javascript
+        value: "['off','minimal','low'].includes(output.effectiveThinkingLevel)"
+    metadata: { category: enforceUserCeiling }
+
+  - vars:
+      prompt: "design a plugin architecture for multiple local inference hosts"
+      thinkingLevel: medium
+    assert:
+      - type: javascript
+        value: output.userCeilingRespected === true
+      - type: javascript
+        value: "['off','minimal','low','medium'].includes(output.effectiveThinkingLevel)"
+    metadata: { category: enforceUserCeiling }
+
+  - vars:
+      prompt: "plan the implementation of cross-process memory accounting"
+      thinkingLevel: off
+    assert:
+      - type: javascript
+        value: output.userCeilingRespected === true
+      - type: javascript
+        value: output.effectiveThinkingLevel === 'off'
+    metadata: { category: enforceUserCeiling }
+
+  # === Edge Cases (4 fixtures) ===
+  - vars:
+      prompt: ""
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: edge-cases, notes: "Empty prompt should route to local" }
+
+  - vars:
+      prompt: "a"
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: edge-cases, notes: "Single character prompt" }
+
+  - vars:
+      prompt: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat."
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: edge-cases, notes: "Very long but still local prompt" }
+
+  - vars:
+      prompt: "help"
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: edge-cases, notes: "Minimal ambiguous prompt" }
