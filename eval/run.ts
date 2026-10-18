@@ -4,8 +4,10 @@
  * Exits non-zero below the recorded floor, so a heuristic change that regresses
  * routing quality cannot land quietly.
  *
- * `--live` additionally scores the configured local classifier against a reachable
- * host (manual; needs LM Studio/ollama running and a decision model loaded).
+ * NOTE: this scores the **heuristic**, not the decision model. The classifier is
+ * not reachable from a standalone script without pi's model registry, so scoring
+ * the real model (a `--live` mode) is tracked in #97 and will run through pi.
+ * Do not describe this script's score as decision-model accuracy.
  */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
