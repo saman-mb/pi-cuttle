@@ -4,11 +4,17 @@
     "model": "llama.cpp/ggml-org/Kev-9B-GGUF:Q8_0",
     "fallback": "heuristic",
     "timeoutMs": 4000,
-    "stateChars": 16000
+    "stateChars": 16000,
+    "backoffAfterFailures": 3,
+    "backoffMs": 60000
   },
   "catalog": {
     "local": ["mtplx/mtplx-qwen38-27b-optimized-quality"],
     "cloud": ["opencode-go/deepseek-v4.1-flash"]
+  },
+  "capabilities": {
+    "mtplx/mtplx-qwen38-27b-optimized-quality": 0.8,
+    "opencode-go/deepseek-v4.1-flash": 0.6
   },
   "policy": {
     "mode": "complexity",
@@ -22,8 +28,10 @@
     "onFull": "spill",
     "waitMs": 20000,
     "slotDir": "~/.pi/agent/pi-cuttle/slots",
-    "staleSlotMs": 300000
+    "staleSlotMs": 300000,
+    "providers": ["lmstudio", "llama.cpp", "ollama", "mtplx"]
   },
+  "_note": "telemetry.pricing is now optional; /cuttle stats falls back to pi's registry cost.",
   "telemetry": {
     "enabled": true,
     "path": "~/.pi/agent/pi-cuttle/decisions.jsonl",
