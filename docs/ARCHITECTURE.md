@@ -98,3 +98,14 @@ the floor. Add a prompt that exposed a real misroute before changing heuristics.
 | `message_end` once per provider request? | **Yes** | Slot release is exact; stale reaping is a safety net (#25). |
 | Extension flags readable in the factory? | **No** | Read `--cuttle-force` lazily in `route()` (#26). |
 | Children inherit virtual models? | **Not reliably** | Load the extension via `subagentOnlyExtensions` (#28). |
+
+## Decision: reject LangGraph (#92)
+
+Decision: reject LangGraph. Do not add @langchain/langgraph. Do not rewire routeRequest.
+
+`routeRequest()` is 366 lines (`src/virtual-models.ts:290-655`), not the ~200 the issue claimed, so the issue's own >300-line trigger to re-evaluate had already fired. The issue's claim that "TS support is newer" is stale. `@langchain/langgraph@1.5.1` imports and typechecks under NodeNext with no build step (measured outside this repo); that does not make it a dependency this extension should take.
+
+Invariants unchanged. Routing still decides once per user turn, `route()` stays self-contained, and the governor stays on the filesystem. No component was added.
+
+Evidence, the rejected `StateGraph` alternative, and what would change the answer: [spikes/92-langgraph-routing.md](spikes/92-langgraph-routing.md).
+
