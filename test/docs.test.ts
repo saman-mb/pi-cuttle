@@ -53,3 +53,24 @@ test("docs and code agree that contextSource still defaults to last-message (#10
 	}
 	assert.match(read("docs/CONFIG.md"), /contextSource/, "docs/CONFIG.md must document the field");
 });
+
+/**
+ * Pins the honesty of the rollout docs (#103 integration board).
+ *
+ * The board rejected an earlier draft for overclaiming: "can never route worse" and an unexplained
+ * "every knob" panel promise. A doc that oversells an unproven signal is a product defect, not a
+ * wording preference — these assertions keep the corrected claims from drifting back.
+ */
+test("the rollout docs do not overclaim the conversation signal (#103)", () => {
+	const config = read("docs/CONFIG.md");
+	const changelog = read("CHANGELOG.md");
+
+	assert.doesNotMatch(config, /can never route worse/i, "must not promise the opt-in path is strictly better");
+	assert.doesNotMatch(changelog, /never delays a turn/i, "must not claim a second classifier call is free");
+	assert.doesNotMatch(config, /showing every knob/i, "the panel does not expose every knob");
+
+	// The limitations of the new signal must be stated, not merely implied.
+	assert.match(config, /not earlier \*\*user\*\* requests/i, "must name the earlier-user-message gap");
+	assert.match(config, /JSON-only for now/i, "must disclose that the new fields are not panel-editable");
+	assert.match(config, /does\s+\*\*not\*\*\s+exist yet|not exist yet/i, "must state the evidence does not exist yet");
+});
