@@ -29,7 +29,7 @@ import {
 	scoreToThinkingLevel,
 } from "./thinking-levels.ts";
 import type { LocalGovernor } from "./governor.ts";
-import type { ClassifierFailure, Reservation, RouterConfig, RouterFlavor, RouterState, Tier } from "./types.ts";
+import type {ClassifierFailure, Reservation, RouterConfig, RouterFlavor, RouterState, Tier, SignalPath} from "./types.ts";
 import { VIRTUAL_PROVIDER } from "./types.ts";
 
 export interface RouterRuntime {
@@ -54,7 +54,7 @@ export interface RouterRuntime {
 		reason: string;
 		source: string;
 		/** Which signal the classifier was given (#108). Absent when no classifier ran. */
-		signalPath?: "last-message" | "conversation" | "heuristic" | "off";
+		signalPath?: SignalPath;
 		score?: number;
 		subagent: boolean;
 		at: number;
