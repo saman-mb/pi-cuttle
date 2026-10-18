@@ -157,7 +157,9 @@ route result tier=cloud ref=opencode-go/deepseek-v4.1-flash reasons=classifier p
 Run `/cuttle config` for a single searchable panel showing classifier, catalogs, policy,
 and max concurrent settings. In TUI mode it's fully interactive; in non-TUI modes it shows
 a text view with all values and which file to edit. Changes write immediately to the user
-config file and take effect from the next turn.
+config file and take effect from the next routing decision — a new session, or the next user
+turn when `policy.reclassify` is `"turn"` (the default is `"session"`, so classifier and
+policy edits usually land in a new session). A turn that already decided keeps its model.
 
 ### Subagent-aware routing
 
