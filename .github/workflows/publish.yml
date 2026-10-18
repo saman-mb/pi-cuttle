@@ -47,7 +47,7 @@ jobs:
       - run: npm test
       - run: npm run typecheck
 
-      - name: Check if code changed
+      - name: Decide whether to publish
         id: check
         run: |
           EVENT="${{ github.event_name }}"
@@ -61,28 +61,15 @@ jobs:
               echo "publish=true" >> $GITHUB_OUTPUT
               echo "reason=version bumped to $CURR_VERSION" >> $GITHUB_OUTPUT
             fi
-            exit 0
-          fi
-          PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${GITHUB_REF_NAME#v}" | head -1)
-          if [ -z "$PREV_TAG" ]; then
-            echo "publish=true" >> $GITHUB_OUTPUT
-            echo "reason=first release" >> $GITHUB_OUTPUT
           else
-            DIFF_FILES=$(git diff "$PREV_TAG" HEAD --name-only)
-            CODE_FILES=$(echo "$DIFF_FILES" | grep -vE "^(docs/|README\.md|CHANGELOG\.md|LICENSE|docs/badges/|docs/assets/)" || true)
-            if [ -z "$CODE_FILES" ]; then
-              echo "publish=false" >> $GITHUB_OUTPUT
-              echo "reason=docs-only change" >> $GITHUB_OUTPUT
-            else
-              echo "publish=true" >> $GITHUB_OUTPUT
-              echo "reason=code changed" >> $GITHUB_OUTPUT
-            fi
+            echo "publish=true" >> $GITHUB_OUTPUT
+            echo "reason=$EVENT" >> $GITHUB_OUTPUT
           fi
 
       - name: Publish
         if: steps.check.outputs.publish == 'true'
         run: npm publish --provenance --access public --tag "${{ github.event.inputs.tag || 'latest' }}"
 
-      - name: Skip publish (version unchanged or docs only)
+      - name: Skip publish
         if: steps.check.outputs.publish == 'false'
         run: echo "Skipping npm publish — ${{ steps.check.outputs.reason }}"
