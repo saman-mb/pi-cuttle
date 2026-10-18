@@ -585,31 +585,16 @@ test("#112 (G): a direct request with a missing local ref rejects on big-local",
 	);
 });
 
-test("#112: a direct big-local request rejects when the governor refuses a slot", async () => {
+test("#112: a direct big-local request bypasses the governor by design but never routes cloud", async () => {
+	// Direct = compaction / extension streamSimple(): no completion hook to release a held slot,
+	// and compaction is the safety valve that reduces context (see #119). The pin still holds.
 	const cfg = config();
-	const { rt } = runtime(cfg, false);
-	await assertRejectsWith(
-		() => routeRequest(rt, "big-local", { ...baseReq, reason: "direct" } as never, ctxWith()),
-		[/local-only/, /local full/],
-	);
-});
-
-test("#112: a direct big-local request rejects when the context exceeds the local window", async () => {
-	const cfg = config();
-	const { rt } = runtime(cfg);
-	await assertRejectsWith(
-		() => routeRequest(rt, "big-local", { ...baseReq, reason: "direct" } as never, ctxWith({ window: 1000, tokens: 999 })),
-		[/context exceeds local window/],
-	);
-});
-
-test("#112: a direct big-local request releases its granted reservation", async () => {
-	const cfg = config();
-	const { rt, released } = runtime(cfg);
+	const { rt, acquireCalls, released } = runtime(cfg, false);
 	const route = await routeRequest(rt, "big-local", { ...baseReq, reason: "direct" } as never, ctxWith());
 	assert.equal(route.model.provider, "lmstudio");
 	assert.equal(route.model.id, "local-model");
-	assert.ok(released.includes("local-model"), "direct requests release their local reservation immediately");
+	assert.equal(acquireCalls.length, 0, "direct requests do not take a governor slot");
+	assert.equal(released.length, 0, "nothing to release");
 });
 
 test("#112 (H): local.onFull=wait is forwarded to the governor and never falls back to cloud", async () => {

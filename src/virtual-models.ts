@@ -304,23 +304,23 @@ export async function routeRequest(
 	}
 
 	// Requests outside the agent loop (e.g. compaction summaries) use the deterministic tier.
+	// Direct requests deliberately skip the governor and the context guard: pi routes them
+	// through `modelRegistry.streamSimple()` (docs/virtual-models.md: "direct" = compaction
+	// summary or an extension calling streamSimple) and there is no completion hook to release
+	// a held slot — holding one would block every later local request until stale reaping.
+	// Compaction is also the safety valve that *reduces* context, so gating it on the local
+	// window would reject the request that fixes the overflow. The local-only guarantee still
+	// holds; only capacity/context gating is skipped (pre-existing behaviour, see #119).
 	if (request.reason === "direct") {
 		const tier = flavorBias(flavor) ?? "cloud";
+		const localRefs = tier === "local" ? localCandidates(rt.config, ctx, flavor) : [];
 		let ref: string | undefined;
 		if (tier === "local") {
-			if (localOnly) {
-				const reserved = await ensureLocalSlot(rt, ctx, flavor, sessionId, 0, true);
-				if (reserved.causes) throwLocalOnlyUnavailable(flavor, reserved.causes);
-				if (reserved.reservation) {
-					ref = reserved.ref;
-					rt.governor.release(reserved.reservation);
-				}
-			} else {
-				ref = pickLocal(rt.config, ctx, flavor);
-			}
+			ref = localOnly ? firstResolvable(ctx, localRefs) : pickLocal(rt.config, ctx, flavor);
 		} else {
 			ref = pickCloud(rt.config, ctx);
 		}
+		if (localOnly && !ref) throwLocalOnlyUnavailable(flavor, [missingLocalModelCause(localRefs)]);
 		const next: RouterState = localOnly
 			? {
 				tier: "local",
