@@ -35,6 +35,7 @@ export const DEFAULTS: RouterConfig = {
 		providers: ["lmstudio", "llama.cpp", "ollama", "mtplx"],
 	},
 	telemetry: { enabled: true, path: join(homedir(), ".pi", "agent", "pi-cuttle", "decisions.jsonl"), pricing: {} },
+	capabilities: {},
 };
 
 export interface LoadedConfig {
@@ -86,6 +87,7 @@ export function applyOverrides(config: RouterConfig, parsed: unknown): RouterCon
 		local: mergeSection(config.local, parsed.local),
 		telemetry: mergeSection(config.telemetry, parsed.telemetry),
 		gates: mergeSection(config.gates ?? {}, parsed.gates),
+		capabilities: mergeSection(config.capabilities ?? {}, parsed.capabilities),
 	};
 }
 

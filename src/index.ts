@@ -56,7 +56,6 @@ export default function modelRouter(pi: ExtensionAPI): void {
 		governor,
 		pins: new Map(),
 		previousModels: new Map(),
-		sizes: new Map(),
 		classifierFailures: 0,
 		classifierBackoffUntil: 0,
 		log,

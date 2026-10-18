@@ -151,6 +151,12 @@ export interface RouterConfig {
 	telemetry: TelemetryConfig;
 	/** Optional phase-2 gates. */
 	gates?: GatesConfig;
+	/**
+	 * Optional capability override per model ref, in [0,1]. Higher means the model can
+	 * handle harder work. When set, this is used instead of the context-window ratio for
+	 * "smallest adequate model" selection and for `cuttle/fast-local` ordering.
+	 */
+	capabilities?: Record<string, number>;
 }
 
 /** Router state persisted on the session branch by pi. Must be JSON-serializable. */

@@ -33,8 +33,6 @@ export interface RouterRuntime {
 	previousModels: Map<string, string>;
 	/** Invocation-wide override from `--cuttle-force`, read lazily (#26). */
 	getForced?: () => Tier | undefined;
-	/** Local model key -> size in bytes, for `cuttle/fast-local` ordering (#19). */
-	sizes: Map<string, number>;
 	/** Optional debug logger (set from `PI_CUTTLE_DEBUG`). */
 	log?: (message: string) => void;
 	/** Most recent classifier failure, for `/cuttle status` (#53). */
@@ -66,7 +64,8 @@ function modelContextWindow(ctx: ExtensionContext, ref: string): number {
 	return model?.contextWindow ?? 0;
 }
 
-function capacityScore(ctx: ExtensionContext, ref: string, pool: readonly string[]): number {
+function capacityScore(ctx: ExtensionContext, ref: string, pool: readonly string[], capabilities?: Record<string, number>): number {
+	if (capabilities?.[ref] !== undefined) return capabilities[ref];
 	const window = modelContextWindow(ctx, ref);
 	if (window <= 0) return 0;
 	const windows = pool.map((r) => modelContextWindow(ctx, r)).filter((w) => w > 0);
@@ -75,36 +74,38 @@ function capacityScore(ctx: ExtensionContext, ref: string, pool: readonly string
 	return window / max;
 }
 
-/** Pick a local candidate. `fast-local` orders by on-disk size; otherwise the smallest model that can handle `score` is chosen. */
-export function pickLocal(
-	config: RouterConfig,
-	ctx: ExtensionContext,
-	flavor?: RouterFlavor,
-	sizes?: Map<string, number>,
-	score = 0,
-): string | undefined {
-	return localCandidates(config, ctx, flavor, sizes, score)[0];
+function costOf(ctx: ExtensionContext, ref: string): number {
+	const parsed = splitRef(ref);
+	if (!parsed) return Number.POSITIVE_INFINITY;
+	const model = ctx.modelRegistry.find(parsed.provider, parsed.id);
+	if (!model?.cost) return Number.POSITIVE_INFINITY;
+	return model.cost.input + model.cost.output;
+}
+
+/** Pick a local candidate. `fast-local` orders by configured capability; otherwise the smallest model that can handle `score` is chosen. */
+export function pickLocal(config: RouterConfig, ctx: ExtensionContext, flavor?: RouterFlavor, score = 0): string | undefined {
+	return localCandidates(config, ctx, flavor, score)[0];
 }
 
 export function pickCloud(config: RouterConfig, ctx: ExtensionContext, score = 0): string | undefined {
 	return cloudCandidates(config, ctx, score)[0];
 }
 
-/** Ordered local candidates; `fast-local` sorts by on-disk size, otherwise by complexity capacity. */
-export function localCandidates(
-	config: RouterConfig,
-	ctx: ExtensionContext,
-	flavor?: RouterFlavor,
-	sizes?: Map<string, number>,
-	score = 0,
-): string[] {
+/** Ordered local candidates; `fast-local` sorts by configured capability, otherwise by complexity capacity. */
+export function localCandidates(config: RouterConfig, ctx: ExtensionContext, flavor?: RouterFlavor, score = 0): string[] {
 	const list = [...config.catalog.local];
-	if (flavor === "fast-local" && sizes && sizes.size > 0) {
-		list.sort((a, b) => (sizes.get(a) ?? Number.POSITIVE_INFINITY) - (sizes.get(b) ?? Number.POSITIVE_INFINITY));
+	const caps = config.capabilities;
+	if (flavor === "fast-local") {
+		list.sort((a, b) => {
+			const ca = caps?.[a] ?? Number.POSITIVE_INFINITY;
+			const cb = caps?.[b] ?? Number.POSITIVE_INFINITY;
+			if (ca === cb) return 0;
+			return ca - cb;
+		});
 	} else if (score > 0 && list.length > 1) {
 		list.sort((a, b) => {
-			const ca = capacityScore(ctx, a, list);
-			const cb = capacityScore(ctx, b, list);
+			const ca = capacityScore(ctx, a, list, caps);
+			const cb = capacityScore(ctx, b, list, caps);
 			const aFits = ca >= score;
 			const bFits = cb >= score;
 			if (aFits && !bFits) return -1;
@@ -117,15 +118,17 @@ export function localCandidates(
 
 export function cloudCandidates(config: RouterConfig, ctx: ExtensionContext, score = 0): string[] {
 	const list = [...config.catalog.cloud];
+	const caps = config.capabilities;
 	if (score > 0 && list.length > 1) {
 		list.sort((a, b) => {
-			const ca = capacityScore(ctx, a, list);
-			const cb = capacityScore(ctx, b, list);
+			const ca = capacityScore(ctx, a, list, caps);
+			const cb = capacityScore(ctx, b, list, caps);
 			const aFits = ca >= score;
 			const bFits = cb >= score;
 			if (aFits && !bFits) return -1;
 			if (!aFits && bFits) return 1;
-			return ca - cb;
+			// Among models that fit the work, prefer the cheapest; window ratio breaks ties.
+			return costOf(ctx, a) - costOf(ctx, b) || ca - cb;
 		});
 	}
 	return list;
@@ -178,7 +181,7 @@ async function ensureLocalSlot(
 	sessionId: string,
 	score = 0,
 ): Promise<{ spill?: string; reservation?: Reservation; ref?: string }> {
-	const candidates = localCandidates(rt.config, ctx, flavor, rt.sizes, score);
+	const candidates = localCandidates(rt.config, ctx, flavor, score);
 	if (candidates.length === 0) return { spill: "no local model configured" };
 	const unresolvable: string[] = [];
 	let sawContextOverflow = false;
@@ -234,7 +237,7 @@ export async function routeRequest(
 	// Requests outside the agent loop (e.g. compaction summaries) use the deterministic tier.
 	if (request.reason === "direct") {
 		const tier = flavorBias(flavor) ?? "cloud";
-		const ref = tier === "local" ? pickLocal(rt.config, ctx, flavor, rt.sizes) : pickCloud(rt.config, ctx);
+		const ref = tier === "local" ? pickLocal(rt.config, ctx, flavor) : pickCloud(rt.config, ctx);
 		const next: RouterState =
 			state ?? { tier, modelId: ref ?? "", phase, decision: { source: "pin", reason: "direct request" } };
 		return resolveModel(ctx, ref, thinking, next);
@@ -323,7 +326,7 @@ export async function routeRequest(
 						flippedRef = reserved.ref;
 					}
 				}
-				const ref = tier === "local" ? (flippedRef ?? firstResolvable(ctx, localCandidates(rt.config, ctx, flavor, rt.sizes, state.decision.score ?? 0))) : firstResolvable(ctx, cloudCandidates(rt.config, ctx, state.decision.score ?? 0));
+				const ref = tier === "local" ? (flippedRef ?? firstResolvable(ctx, localCandidates(rt.config, ctx, flavor, state.decision.score ?? 0))) : firstResolvable(ctx, cloudCandidates(rt.config, ctx, state.decision.score ?? 0));
 				rt.log?.(`route phase-flip ${state.phase} -> ${detected} tier=${tier} ref=${ref}`);
 				const next: RouterState = {
 					tier,

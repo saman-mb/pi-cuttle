@@ -63,7 +63,6 @@ function runtime(cfg: RouterConfig, grant = true): { rt: RouterRuntime; acquired
 		governor,
 		pins: new Map(),
 		previousModels: new Map(),
-		sizes: new Map(),
 		classifierFailures: 0,
 		classifierBackoffUntil: 0,
 	};
