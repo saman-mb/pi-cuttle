@@ -14,9 +14,21 @@ import { dirname, join, resolve } from "node:path";
 
 import type { ObservabilityConfig, RouterConfig } from "./types.ts";
 
+const MAX_CONTEXT_BUDGET = 64_000;
+
 export const DEFAULTS: RouterConfig = {
 	autoSelect: false,
-	classifier: { fallback: "heuristic", timeoutMs: 4000, stateChars: 16_000, backoffAfterFailures: 3, backoffMs: 60_000 },
+	classifier: {
+		fallback: "heuristic",
+		timeoutMs: 4000,
+		contextSource: "last-message",
+		contextShadow: false,
+		contextBudget: 8192,
+		conversationWindow: 3,
+		stateChars: 16_000,
+		backoffAfterFailures: 3,
+		backoffMs: 60_000,
+	},
 	catalog: { local: [], cloud: [] },
 	policy: {
 		mode: "complexity",
@@ -88,12 +100,33 @@ export function mergePolicy(base: RouterConfig["policy"], patch: unknown): Route
 	} as RouterConfig["policy"];
 }
 
+function mergeClassifier(base: RouterConfig["classifier"], patch: unknown): RouterConfig["classifier"] {
+	const classifier = mergeSection(base, patch);
+	if (!isRecord(patch)) return classifier;
+
+	if (typeof patch.contextShadow !== "boolean") classifier.contextShadow = base.contextShadow;
+	if (!["last-message", "conversation", "off"].includes(classifier.contextSource)) {
+		classifier.contextSource = "last-message";
+	}
+	if (typeof patch.contextBudget === "number" && Number.isFinite(patch.contextBudget)) {
+		classifier.contextBudget = Math.max(1, Math.min(MAX_CONTEXT_BUDGET, Math.floor(patch.contextBudget)));
+	} else if (patch.contextBudget !== undefined || typeof classifier.contextBudget !== "number" || !Number.isFinite(classifier.contextBudget)) {
+		classifier.contextBudget = base.contextBudget;
+	}
+	if (typeof patch.conversationWindow === "number" && Number.isFinite(patch.conversationWindow)) {
+		classifier.conversationWindow = Math.max(0, Math.floor(patch.conversationWindow));
+	} else if (patch.conversationWindow !== undefined || typeof classifier.conversationWindow !== "number" || !Number.isFinite(classifier.conversationWindow)) {
+		classifier.conversationWindow = base.conversationWindow;
+	}
+	return classifier;
+}
+
 /** Apply one parsed JSON object over a config, section by section. Exported for tests. */
 export function applyOverrides(config: RouterConfig, parsed: unknown): RouterConfig {
 	if (!isRecord(parsed)) return config;
 	return {
 		autoSelect: typeof parsed.autoSelect === "boolean" ? parsed.autoSelect : config.autoSelect,
-		classifier: mergeSection(config.classifier, parsed.classifier),
+		classifier: mergeClassifier(config.classifier, parsed.classifier),
 		catalog: mergeSection(config.catalog, parsed.catalog),
 		policy: mergePolicy(config.policy, parsed.policy),
 		local: mergeSection(config.local, parsed.local),
@@ -167,8 +200,25 @@ export function loadConfig(cwd: string): LoadedConfig {
 			warnings.push(`${path}: expected a JSON object`);
 			continue;
 		}
+		if (isRecord(parsed.classifier)) {
+			const classifier = parsed.classifier;
+			if (classifier.contextSource !== undefined && !["last-message", "conversation", "off"].includes(classifier.contextSource as string)) {
+				warnings.push(`${path}: unknown classifier.contextSource; using last-message`);
+			}
+			if (classifier.contextBudget !== undefined) {
+				if (typeof classifier.contextBudget !== "number" || !Number.isFinite(classifier.contextBudget)) {
+					warnings.push(`${path}: invalid classifier.contextBudget; keeping the current value`);
+				} else if (classifier.contextBudget > MAX_CONTEXT_BUDGET || classifier.contextBudget < 1) {
+					warnings.push(`${path}: classifier.contextBudget clamped to ${Math.max(1, Math.min(MAX_CONTEXT_BUDGET, Math.floor(classifier.contextBudget)))}`);
+				}
+			}
+			if (classifier.conversationWindow !== undefined && (typeof classifier.conversationWindow !== "number" || !Number.isFinite(classifier.conversationWindow))) {
+				warnings.push(`${path}: invalid classifier.conversationWindow; keeping the current value`);
+			}
+		}
 		config = applyOverrides(config, parsed);
-		sources.push(resolve(path));	}
+		sources.push(resolve(path));
+	}
 
 	config.local.slotDir = resolve(expandHome(config.local.slotDir));
 	config.telemetry.path = resolve(expandHome(config.telemetry.path));

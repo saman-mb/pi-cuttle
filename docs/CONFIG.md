@@ -14,7 +14,7 @@ Worked example: [`examples/pi-cuttle.example.json`](../examples/pi-cuttle.exampl
 
 ## Interactive config panel
 
-Run `/cuttle config` for a single searchable panel showing every knob with its current value:
+Run `/cuttle config` for a single searchable panel showing the routing knobs with their current values:
 
 - **Classifier model** — pick from pi's registered classifiers or unset (heuristic)
 - **Local catalog** — read-only; use `/cuttle models` to change
@@ -26,8 +26,10 @@ In TUI mode the panel is interactive (Enter to select, Esc to cancel). In non-TU
 (print, JSON, RPC) it falls back to a text view showing all values and which file to edit.
 
 Changes are written immediately to `~/.pi/agent/pi-cuttle.json` and take effect from the next
-user turn. Sections locked by a project config file (`.pi/pi-cuttle.json`) are shown as
-SHADOWED and cannot be changed via the panel.
+**routing decision** — a new session, or the next user turn when `policy.reclassify` is `"turn"`.
+The default is `"session"`, so classifier and policy edits usually land in a new session; a turn
+that already decided keeps its model. Sections locked by a project config file
+(`.pi/pi-cuttle.json`) are shown as SHADOWED and cannot be changed via the panel.
 
 ## Model refs
 
@@ -45,11 +47,69 @@ The decision model. Must be a classifier pi can resolve via `ctx.modelRegistry`.
 | `model` | string | unset | `provider/model` of the classifier. Examples: `llama.cpp/ggml-org/Kev-9B-GGUF:Q8_0`, `opencode-go/some-classifier`. |
 | `fallback` | `"heuristic"` \| `"local"` \| `"cloud"` | `"heuristic"` | What to use when the classifier is unavailable or times out. |
 | `timeoutMs` | number | `4000` | Classifier timeout before falling back. |
-| `stateChars` | number | `16000` | Characters of the prompt handed to the classifier. |
+| `stateChars` | number | `16000` | Characters of the prompt handed to the classifier. Applies **only** when `contextSource` is `"last-message"` (the default); ignored otherwise. |
 | `backoffAfterFailures` | number | `3` | Consecutive failures before the classifier is skipped. |
 | `backoffMs` | number | `60000` | Cooldown after the failure threshold is crossed. |
+| `contextSource` | `"last-message"` \| `"conversation"` \| `"off"` | `"last-message"` | What the classifier is shown. `last-message` is today's behaviour: the newest user message, truncated by `stateChars`. `conversation` sends a structured view of the session instead. `off` skips the classifier entirely and uses the heuristic. **The default has not changed.** |
+| `contextBudget` | number | `8192` | Hard character cap for the `conversation` signal. Clamped to 64 000; values outside 1–64 000 are clamped rather than rejected. |
+| `conversationWindow` | number | `3` | How many recent assistant turns the `conversation` signal includes. |
+| `contextShadow` | boolean | `false` | When `true`, also classify with the *other* signal source and record both verdicts in the shadow log. Observability only — the alternate verdict never routes. Pair it with `policy`-level debugging before trusting the comparison. |
 
 Example: `{ "model": "llama.cpp/ggml-org/Kev-9B-GGUF:Q8_0", "fallback": "heuristic" }`.
+
+A second example enabling the conversation signal:
+
+```json
+{
+  "classifier": {
+    "model": "llama.cpp/ggml-org/Kev-9B-GGUF:Q8_0",
+    "contextSource": "conversation",
+    "contextBudget": 8192,
+    "conversationWindow": 3
+  }
+}
+```
+
+### Conversation context (`contextSource`)
+
+By default the classifier sees **only the newest user message**, truncated to `stateChars`
+characters. In a long session a terse follow-up ("do the other thing") is then classified on
+those few words alone.
+
+Setting `contextSource: "conversation"` sends a structured signal instead: the latest user
+message in full, the last `conversationWindow` assistant turns (role-tagged, each capped),
+a tool-usage digest, and session size — all inside `contextBudget`.
+
+The latest user message is never dropped in favour of history. Older assistant turns are dropped
+first when the budget is tight. Only text content is included — images and binary blocks are
+filtered out. The signal is deterministic.
+
+The path falls back to `last-message` (with the reason logged) when the formatter cannot produce
+usable context, and when the latest message alone is larger than `contextBudget` — so opting in
+never shows the classifier *less* text than the default would.
+
+**Known limitations of this signal** (do not read it as a strict improvement):
+
+- it includes recent **assistant** turns, but not earlier **user** requests — a follow-up like
+  "do the other thing" may still miss its referent when that referent was an earlier user message;
+- it omits tool *results* (only a usage digest), so the substance of a long tool output is not seen;
+- it has not been shown on real sessions to improve routing yet. That is exactly what
+  `contextShadow` exists to measure.
+
+**Rollout status.** `conversation` is **opt-in** and the default remains `last-message`. The
+default will only be changed after `contextShadow` comparison data from real sessions shows the
+conversation signal wins on terse follow-ups without regressing other cases. That evidence does
+**not** exist yet. Until it does, no default has changed, and no claim is made here that
+`conversation` routes better than `last-message`.
+
+**JSON-only for now.** The `contextSource`, `contextBudget`, `conversationWindow` and
+`contextShadow` fields are **not** editable through the `/cuttle config` panel in this release —
+set them in `pi-cuttle.json`. The panel shows the effective `contextSource` under `/cuttle status`
+instead of editing it.
+
+**Timing.** This changes only what the classifier is shown, never when it runs. Routing still
+decides once per user turn; with the default `policy.reclassify: "session"` the decision is taken
+once and kept unless the session is recovering or de-escalating.
 
 `/cuttle doctor` checks that the classifier resolves and answers a trivial probe.
 Set `PI_CUTTLE_DEBUG` to a file path to log each routing decision and any classifier

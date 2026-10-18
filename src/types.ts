@@ -26,7 +26,15 @@ export interface ClassifierConfig {
 	/** What to do when the classifier is unavailable or times out. */
 	fallback: "heuristic" | Tier;
 	timeoutMs: number;
-	/** Characters of the prompt handed to the classifier. */
+	/** Source of the classifier prompt; defaults to the most recent user message. */
+	contextSource: "last-message" | "conversation" | "off";
+	/** Compare the alternate signal path in shadow mode without affecting routing. */
+	contextShadow: boolean;
+	/** Character budget for formatted conversation context. */
+	contextBudget: number;
+	/** Number of recent assistant turns included in conversation context. */
+	conversationWindow: number;
+	/** Characters of the prompt handed to the classifier in last-message mode. */
 	stateChars: number;
 	/** Consecutive failures before the classifier is skipped for backoffMs. */
 	backoffAfterFailures: number;
@@ -243,6 +251,14 @@ export interface GateVerdicts {
 	role?: GateAnswer & { shadow: boolean };
 	judge?: GateAnswer & { shadow: boolean };
 	struggle?: GateAnswer & { shadow: boolean };
+}
+
+export type SignalPath = "last-message" | "conversation" | "heuristic" | "off";
+
+export interface PairedSignalVerdicts {
+	authoritative: { signalPath: "last-message" | "conversation"; tier: Tier };
+	alternate: { signalPath: "last-message" | "conversation"; tier: Tier };
+	agree: boolean;
 }
 
 export interface Decision {

@@ -29,7 +29,7 @@ import {
 	scoreToThinkingLevel,
 } from "./thinking-levels.ts";
 import type { LocalGovernor } from "./governor.ts";
-import type { ClassifierFailure, Reservation, RouterConfig, RouterFlavor, RouterState, Tier } from "./types.ts";
+import type {ClassifierFailure, Reservation, RouterConfig, RouterFlavor, RouterState, Tier, SignalPath} from "./types.ts";
 import { VIRTUAL_PROVIDER } from "./types.ts";
 
 export interface RouterRuntime {
@@ -53,6 +53,8 @@ export interface RouterRuntime {
 		thinkingLevel: string;
 		reason: string;
 		source: string;
+		/** Which signal the classifier was given (#108). Absent when no classifier ran. */
+		signalPath?: SignalPath;
 		score?: number;
 		subagent: boolean;
 		at: number;
@@ -507,6 +509,8 @@ export async function routeRequest(
 		skipClassifier,
 		...(forced ? { forced } : {}),
 	});
+	const signalPath = decided.signalPath;
+	const shadowComparison = decided.shadowComparison;
 	if (decided.classifierFailure) {
 		rt.lastClassifierError = { ...decided.classifierFailure, turn: userTurn(request.messages), at: Date.now() };
 		rt.classifierFailures += 1;
@@ -580,8 +584,23 @@ export async function routeRequest(
 	}
 
 	rt.log?.(`route result tier=${tier} ref=${ref} thinking=${effectiveThinking} reasons=${reasons.join("; ")}`);
-	if (gatesActive(rt.config.gates)) {
-		appendShadow({ at: Date.now(), flavor, tier, source: decision.source, gates: decision.gates, reason: reasons.join("; ") });
+	if (gatesActive(rt.config.gates) || rt.config.classifier.contextShadow) {
+		const record = {
+			at: Date.now(),
+			flavor,
+			tier,
+			source: decision.source,
+			signalPath,
+			gates: decision.gates,
+			// Keep the ledger metadata-only, even if a classifier error echoes its input.
+			reason: `${decision.source} decision`,
+		};
+		if (shadowComparison) {
+			// Never wait for the alternate classifier: it is observability only and may time out.
+			void shadowComparison.then((paired) => appendShadow({ ...record, ...(paired ? { paired } : {}) }));
+		} else {
+			appendShadow(record);
+		}
 	}
 	const next: RouterState = {
 		tier,
@@ -599,6 +618,7 @@ export async function routeRequest(
 		thinkingLevel: effectiveThinking,
 		reason: reasons.join("; "),
 		source: decision.source,
+		signalPath,
 		score: decision.score,
 		subagent: isSubagent(),
 		at: Date.now(),

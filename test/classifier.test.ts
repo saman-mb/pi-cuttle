@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import { decideTier, applyPolicy, buildQuestions, heuristicScore, parseGateVerdicts, splitRef } from "../src/classifier.ts";
 import { DEFAULTS } from "../src/config.ts";
+import { NEW_SESSION } from "../src/classifier-context.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 function fakeCtx(classifyResult?: { stopReason: "stop" | "error"; answers: Record<string, unknown> }): ExtensionContext {
@@ -25,19 +26,22 @@ test("mechanical prompts lean local, design prompts lean cloud", () => {
 
 test("a pin short-circuits everything, including the classifier", async () => {
 	const decision = await decideTier({
-		config: { ...DEFAULTS, classifier: { ...DEFAULTS.classifier, model: "llama.cpp/x" } },
+		config: { ...DEFAULTS, classifier: { ...DEFAULTS.classifier, model: "llama.cpp/x", contextShadow: true } },
 		prompt: "refactor everything",
 		ctx: fakeCtx(),
 		forced: "local",
 	});
 	assert.equal(decision.tier, "local");
 	assert.equal(decision.source, "pin");
+	assert.equal(decision.signalPath, "off");
+	assert.equal(decision.shadowComparison, undefined);
 });
 
 test("no classifier configured uses the heuristic", async () => {
 	const decision = await decideTier({ config: DEFAULTS, prompt: "rename a variable", ctx: fakeCtx() });
 	assert.equal(decision.source, "heuristic");
 	assert.equal(decision.tier, "local");
+	assert.equal(decision.signalPath, "heuristic");
 });
 
 test("a classifier configured but missing from pi falls back to heuristic", async () => {
@@ -110,6 +114,214 @@ test("classifier via modelRegistry: high complexity -> cloud", async () => {
 	});
 	assert.equal(d.tier, "cloud");
 	assert.equal(d.source, "classifier");
+});
+
+test("default and last-message modes pass the clipped prompt to the classifier", async () => {
+	for (const config of [
+		{ ...DEFAULTS, classifier: { ...DEFAULTS.classifier, model: "llama.cpp/kev" } },
+		{ ...DEFAULTS, classifier: { ...DEFAULTS.classifier, model: "llama.cpp/kev", contextSource: "last-message" as const } },
+	]) {
+		let receivedPrompt: string | undefined;
+		const ctx = {
+			modelRegistry: {
+				findOfType: () => ({ id: "kev", provider: "llama.cpp" }),
+				classify: async (_model: unknown, input: { state: { prompt: string } }) => {
+					receivedPrompt = input.state.prompt;
+					return { stopReason: "stop", answers: { complexity: { type: "choice", choice: "standard", probabilities: { complex: 0.1 } } } };
+				},
+			},
+		} as unknown as ExtensionContext;
+		const prompt = "rename the temporary variable";
+		await decideTier({ config, prompt, ctx });
+		assert.equal(receivedPrompt, prompt.slice(0, config.classifier.stateChars));
+	}
+});
+
+test("conversation mode passes formatted assistant and user context to the classifier", async () => {
+	let receivedPrompt: string | undefined;
+	const ctx = {
+		modelRegistry: {
+			findOfType: () => ({ id: "kev", provider: "llama.cpp" }),
+			classify: async (_model: unknown, input: { state: { prompt: string } }) => {
+				receivedPrompt = input.state.prompt;
+				return { stopReason: "stop", answers: { complexity: { type: "choice", choice: "complex", probabilities: { complex: 0.9 } } } };
+			},
+		},
+	} as unknown as ExtensionContext;
+	const messages = [
+		{ role: "assistant", content: "I traced the earlier failure to a cache invalidation race." },
+		{ role: "user", content: "Now compare the two safe migration approaches." },
+	] as never;
+	const decision = await decideTier({
+		config: {
+			...DEFAULTS,
+			classifier: { ...DEFAULTS.classifier, model: "llama.cpp/kev", contextSource: "conversation" },
+		},
+		prompt: "Now compare the two safe migration approaches.",
+		messages,
+		ctx,
+	});
+	assert.equal(decision.source, "classifier");
+	assert.ok(receivedPrompt?.includes("[assistant]\nI traced the earlier failure"));
+	assert.ok(receivedPrompt?.includes("[user]\nNow compare the two safe migration approaches."));
+	assert.notEqual(receivedPrompt, "Now compare the two safe migration approaches.");
+});
+
+test("signalPath identifies the actual last-message, conversation, and off source", async () => {
+	const config = { ...DEFAULTS, classifier: { ...DEFAULTS.classifier, model: "llama.cpp/kev" } };
+	const lastMessage = await decideTier({ config, prompt: "do it", ctx: fakeCtx() });
+	assert.equal(lastMessage.signalPath, "last-message");
+
+	const conversation = await decideTier({
+		config: { ...config, classifier: { ...config.classifier, contextSource: "conversation" } },
+		prompt: "do it",
+		ctx: fakeCtx(),
+		contextBuilder: () => "formatted conversation",
+	});
+	assert.equal(conversation.signalPath, "conversation");
+
+	const off = await decideTier({
+		config: { ...config, classifier: { ...config.classifier, contextSource: "off" } },
+		prompt: "do it",
+		ctx: fakeCtx(),
+	});
+	assert.equal(off.signalPath, "off");
+});
+
+test("disabled contextShadow makes no extra classifier call or routing wait", async () => {
+	let calls = 0;
+	const ctx = {
+		modelRegistry: {
+			findOfType: () => ({ id: "kev", provider: "llama.cpp" }),
+			classify: async () => {
+				calls++;
+				return { stopReason: "stop", answers: { complexity: { type: "choice", choice: "standard", probabilities: { complex: 0.1 } } } };
+			},
+		},
+	} as unknown as ExtensionContext;
+	const decision = await decideTier({
+		config: { ...DEFAULTS, classifier: { ...DEFAULTS.classifier, model: "llama.cpp/kev" } },
+		prompt: "rename a variable",
+		ctx,
+	});
+	assert.equal(decision.tier, "local");
+	assert.equal(calls, 1);
+	assert.equal(decision.shadowComparison, undefined);
+});
+
+test("contextShadow compares an alternate verdict without changing the authoritative tier", async () => {
+	const classify = (contextShadow: boolean) => {
+		let calls = 0;
+		const ctx = {
+			modelRegistry: {
+				findOfType: () => ({ id: "kev", provider: "llama.cpp" }),
+				classify: async () => {
+					calls++;
+					const complex = calls === 1 ? 0.1 : 0.9;
+					return { stopReason: "stop", answers: { complexity: { type: "choice", choice: complex >= 0.5 ? "complex" : "standard", probabilities: { complex } } } };
+				},
+			},
+		} as unknown as ExtensionContext;
+		return decideTier({
+			config: { ...DEFAULTS, classifier: { ...DEFAULTS.classifier, model: "llama.cpp/kev", contextShadow } },
+			prompt: "fix it",
+			messages: [{ role: "user", content: "fix it" }] as never,
+			ctx,
+			contextBuilder: () => "older context plus fix it",
+		});
+	};
+
+	const authoritativeOnly = await classify(false);
+	const shadowed = await classify(true);
+	assert.equal(authoritativeOnly.tier, "local");
+	assert.equal(shadowed.tier, authoritativeOnly.tier, "alternate verdict must not select the routed tier");
+	assert.deepEqual(await shadowed.shadowComparison, {
+		authoritative: { signalPath: "last-message", tier: "local" },
+		alternate: { signalPath: "conversation", tier: "cloud" },
+		agree: false,
+	});
+});
+
+test("a failed alternate classifier leaves the authoritative decision unchanged", async () => {
+	let calls = 0;
+	const ctx = {
+		modelRegistry: {
+			findOfType: () => ({ id: "kev", provider: "llama.cpp" }),
+			classify: async () => {
+				calls++;
+				if (calls > 1) throw new Error("alternate failed");
+				return { stopReason: "stop", answers: { complexity: { type: "choice", choice: "standard", probabilities: { complex: 0.1 } } } };
+			},
+		},
+	} as unknown as ExtensionContext;
+	const decision = await decideTier({
+		config: { ...DEFAULTS, classifier: { ...DEFAULTS.classifier, model: "llama.cpp/kev", contextShadow: true } },
+		prompt: "rename a variable",
+		ctx,
+	});
+	assert.equal(decision.tier, "local");
+	assert.equal(decision.source, "classifier");
+	assert.equal(await decision.shadowComparison, undefined);
+});
+
+test("off mode skips the classifier and returns a heuristic decision", async () => {
+	let classifierCalls = 0;
+	const ctx = {
+		modelRegistry: {
+			findOfType: () => ({ id: "kev", provider: "llama.cpp" }),
+			classify: async () => {
+				classifierCalls++;
+				return { stopReason: "stop", answers: {} };
+			},
+		},
+	} as unknown as ExtensionContext;
+	const decision = await decideTier({
+		config: { ...DEFAULTS, classifier: { ...DEFAULTS.classifier, model: "llama.cpp/kev", contextSource: "off" } },
+		prompt: "refactor the architecture across the codebase",
+		ctx,
+	});
+	assert.equal(classifierCalls, 0);
+	assert.equal(decision.source, "heuristic");
+	assert.equal(decision.tier, "cloud");
+});
+
+test("formatter failure or empty signal falls back to last-message and is reported", async () => {
+	for (const [contextBuilder, expectedFailure] of [
+		[() => { throw new Error("formatting broke"); }, /formatting broke/],
+		[() => "", /empty context/],
+	] as const) {
+		let receivedPrompt: string | undefined;
+		const logs: string[] = [];
+		const ctx = {
+			modelRegistry: {
+				findOfType: () => ({ id: "kev", provider: "llama.cpp" }),
+				classify: async (_model: unknown, input: { state: { prompt: string } }) => {
+					receivedPrompt = input.state.prompt;
+					return { stopReason: "stop", answers: { complexity: { type: "choice", choice: "standard", probabilities: { complex: 0.1 } } } };
+				},
+			},
+		} as unknown as ExtensionContext;
+		const prompt = "rename a variable safely";
+		const decision = await decideTier({
+			config: {
+				...DEFAULTS,
+				classifier: { ...DEFAULTS.classifier, model: "llama.cpp/kev", contextSource: "conversation", stateChars: 9 },
+			},
+			prompt,
+			ctx,
+			contextBuilder,
+			log: (message) => logs.push(message),
+		});
+		assert.equal(receivedPrompt, prompt.slice(0, 9));
+		assert.equal(decision.source, "classifier");
+		assert.match(decision.reason, expectedFailure);
+		// A context-path fallback must NOT be reported as a classifier failure: the classifier
+		// answered correctly, it was simply shown a different signal. Reporting it as a failure
+		// would let repeated fallbacks (an oversized message, say) trip classifier backoff and
+		// skip the classifier for a session that was never failing. (#103 integration board nit)
+		assert.equal(decision.classifierFailure, undefined, "context fallback is not a classifier failure");
+		assert.match(logs.join("\n"), /falling back to last-message/);
+	}
 });
 
 test("classifier via modelRegistry: low complexity -> local", async () => {
@@ -246,4 +458,101 @@ test("decideTier returns gate verdicts when gates are enabled", async () => {
 	assert.equal(d.source, "classifier");
 	assert.equal(d.gates?.struggle?.type, "bool");
 	assert.match(d.reason, /struggle:/);
+});
+
+// Region: integration defect found by the epic board (#103).
+//
+// The formatter is contractually non-throwing — it returns the NEW_SESSION sentinel when it cannot
+// build context. The classifier's fallback only caught throws and empty strings, so a formatter that
+// degraded internally was classified as the literal sentinel instead of falling back to the
+// last-message prompt. Each unit was correct alone; the combination was wrong.
+
+test("a sentinel from the formatter falls back to last-message instead of being classified", async () => {
+	let receivedPrompt: string | undefined;
+	const logs: string[] = [];
+	const ctx = {
+		modelRegistry: {
+			findOfType: () => ({ id: "kev", provider: "llama.cpp" }),
+			classify: async (_model: unknown, input: { state: { prompt: string } }) => {
+				receivedPrompt = input.state.prompt;
+				return { stopReason: "stop", answers: { complexity: { type: "choice", choice: "standard", probabilities: { complex: 0.1 } } } };
+			},
+		},
+	} as unknown as ExtensionContext;
+	const prompt = "do the other thing";
+	const decision = await decideTier({
+		config: { ...DEFAULTS, classifier: { ...DEFAULTS.classifier, model: "llama.cpp/kev", contextSource: "conversation" } },
+		prompt,
+		ctx,
+		// Simulates the built-in formatter degrading on malformed data.
+		contextBuilder: () => NEW_SESSION,
+		log: (message) => logs.push(message),
+	});
+	assert.notEqual(receivedPrompt, NEW_SESSION, "the sentinel must never be classified");
+	assert.equal(receivedPrompt, prompt);
+	assert.match(decision.reason, /no usable context/);
+	assert.match(logs.join("\n"), /falling back to last-message/);
+});
+
+test("conversation context never shows the classifier less than the default path would", async () => {
+	// A single message larger than contextBudget: the formatter could only truncate it to the
+	// (smaller) conversation budget, which is worse than the default stateChars path.
+	let receivedPrompt: string | undefined;
+	const ctx = {
+		modelRegistry: {
+			findOfType: () => ({ id: "kev", provider: "llama.cpp" }),
+			classify: async (_model: unknown, input: { state: { prompt: string } }) => {
+				receivedPrompt = input.state.prompt;
+				return { stopReason: "stop", answers: { complexity: { type: "choice", choice: "standard", probabilities: { complex: 0.1 } } } };
+			},
+		},
+	} as unknown as ExtensionContext;
+	const prompt = "x".repeat(500);
+	const decision = await decideTier({
+		config: {
+			...DEFAULTS,
+			classifier: { ...DEFAULTS.classifier, model: "llama.cpp/kev", contextSource: "conversation", contextBudget: 100, stateChars: 400 },
+		},
+		prompt,
+		ctx,
+		log: () => {},
+	});
+	assert.equal(receivedPrompt, prompt.slice(0, 400), "must fall back to the larger stateChars window");
+	assert.match(decision.reason, /exceeds contextBudget/);
+});
+
+// Region: shadow parity (#103 integration board, architect seat).
+//
+// The shadow comparison is the evidence used to gate the default flip. If it applied a laxer
+// validation policy than the authoritative path, one real signal would be compared against a garbage
+// one and the resulting ledger would argue for a flip on false grounds.
+
+test("the shadow comparison applies the same fallbacks as the primary path", async () => {
+	const config = {
+		...DEFAULTS,
+		classifier: {
+			...DEFAULTS.classifier,
+			model: "llama.cpp/kev",
+			contextSource: "last-message" as const, // so the alternate path is "conversation"
+			contextShadow: true,
+			contextBudget: 100,
+			stateChars: 400,
+		},
+	};
+
+	// Latest message larger than contextBudget: the alternate conversation signal is unavailable,
+	// so there must be no paired verdict rather than a truncated-vs-real comparison.
+	const oversized = await decideTier({ config, prompt: "x".repeat(500), ctx: fakeCtx(), contextBuilder: () => "conversation signal" });
+	assert.equal(await oversized.shadowComparison, undefined, "oversized message must not yield a paired comparison");
+
+	// Formatter degrading to the sentinel: likewise unavailable.
+	const sentinel = await decideTier({ config, prompt: "short prompt", ctx: fakeCtx(), contextBuilder: () => NEW_SESSION });
+	assert.equal(await sentinel.shadowComparison, undefined, "a sentinel must not be compared");
+
+	// A usable signal still produces a comparison, so the guard has not disabled shadow entirely.
+	const good = await decideTier({ config, prompt: "short prompt", ctx: fakeCtx(), contextBuilder: () => "conversation signal" });
+	const paired = await good.shadowComparison;
+	assert.ok(paired, "a valid alternate signal must still be compared");
+	assert.equal(paired.authoritative.signalPath, "last-message");
+	assert.equal(paired.alternate.signalPath, "conversation");
 });

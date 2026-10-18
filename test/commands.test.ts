@@ -7,7 +7,7 @@ import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-import { applyRuntimePatch, buildInitPatch, buildStatusLines, checkCatalog } from "../src/commands.ts";
+import { applyRuntimePatch, buildInitPatch, buildStatusLines, buildWhyLines, checkCatalog } from "../src/commands.ts";
 import { DEFAULTS, saveUserConfig } from "../src/config.ts";
 import type { RouterRuntime } from "../src/virtual-models.ts";
 
@@ -172,4 +172,47 @@ test("classifier unset produces { classifier: { model: undefined } }", () => {
 	const path = saveUserConfig({ classifier: { model: null } });
 	const saved = JSON.parse(readFileSync(path, "utf8"));
 	assert.equal(saved.classifier.model, null);
+});
+
+// Region: observability of the classifier signal (#103 story #108).
+// `/cuttle status` must show the configured context source, and `/cuttle why` must name the signal
+// the classifier was *actually* given — not merely what the config asks for.
+
+test("buildStatusLines shows the configured context source and budget", () => {
+	const rt = rtWith(false);
+	const lines = buildStatusLines({ rt, loaded: { config: DEFAULTS, sources: [], warnings: [] }, effectiveChars: DEFAULTS.classifier.stateChars, governor: { slots: [], localMax: 1 } });
+	const context = lines.find((line) => line.startsWith("context:"));
+	assert.ok(context, "status must report the context source");
+	assert.match(context, /last-message/);
+	assert.match(context, new RegExp(String(DEFAULTS.classifier.contextBudget)));
+});
+
+test("buildStatusLines marks stateChars inactive when contextSource is not last-message", () => {
+	const rt = rtWith(false);
+	rt.config.classifier.contextSource = "conversation";
+	const lines = buildStatusLines({ rt, loaded: { config: DEFAULTS, sources: [], warnings: [] }, effectiveChars: DEFAULTS.classifier.stateChars, governor: { slots: [], localMax: 1 } });
+	const stateChars = lines.find((line) => line.startsWith("stateChars:"));
+	assert.ok(stateChars, "stateChars line must still render");
+	assert.match(stateChars, /inactive/);
+});
+
+test("buildWhyLines names the signal path that actually decided", () => {
+	const lines = buildWhyLines({
+		flavor: "auto",
+		tier: "local",
+		ref: "mtplx/x",
+		thinkingLevel: "medium",
+		reason: "classifier p(complex)=0.20",
+		source: "classifier",
+		signalPath: "conversation",
+		subagent: false,
+		at: 1_000,
+	}, 61_000);
+	assert.ok(lines.some((line) => /signal:\s+conversation/.test(line)), "why must report the signal path");
+	assert.ok(lines.some((line) => line.includes("60s ago")));
+});
+
+test("buildWhyLines does not imply the classifier ran for pinned or heuristic decisions", () => {
+	const pinned = buildWhyLines({ flavor: "auto", tier: "cloud", ref: "x/y", thinkingLevel: "high", reason: "pinned cloud", source: "pin", subagent: false, at: 0 }, 0);
+	assert.ok(pinned.some((line) => /signal:\s+none \(pin\)/.test(line)), "a pin must not look like a classifier signal");
 });

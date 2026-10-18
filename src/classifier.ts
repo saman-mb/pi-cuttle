@@ -10,6 +10,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ClassifierQuestion, Message } from "@earendil-works/pi-ai";
 
+import { buildClassifierContext, NEW_SESSION } from "./classifier-context.ts";
 import { isSubagent } from "./subagent.ts";
 import type {
 	ChoiceGateConfig,
@@ -18,7 +19,9 @@ import type {
 	GateConfig,
 	GateVerdicts,
 	GatesConfig,
+	PairedSignalVerdicts,
 	RouterConfig,
+	SignalPath,
 	Tier,
 } from "./types.ts";
 
@@ -236,6 +239,56 @@ export function parseGateVerdicts(answers: Record<string, unknown>, gates?: Gate
  * When phase-2 gates are enabled they are asked in the same forward pass as complexity,
  * satisfying the one-pass invariant.
  */
+export interface TierClassification extends Decision {
+	signalPath: SignalPath;
+	/** Resolves after the non-authoritative comparison completes; callers must not await it for routing. */
+	shadowComparison?: Promise<PairedSignalVerdicts | undefined>;
+}
+
+function withSignalPath(decision: Decision, signalPath: SignalPath): TierClassification {
+	return { ...decision, signalPath };
+}
+
+async function classifyAlternateSignal(input: {
+	config: RouterConfig;
+	ctx: ExtensionContext;
+	parsed: { provider: string; id: string };
+	prompt: string;
+	messages?: readonly Message[];
+	signalPath: "last-message" | "conversation";
+	contextBuilder: typeof buildClassifierContext;
+}): Promise<{ signalPath: "last-message" | "conversation"; tier: Tier } | undefined> {
+	try {
+		let prompt = input.prompt.slice(0, input.config.classifier.stateChars);
+		if (input.signalPath === "conversation") {
+			// Same context-validation policy as the authoritative path. If they diverged, the shadow
+			// data would compare one real signal against a garbage one — and that data is what gates
+			// the default flip, so a misleading comparison is worse than no comparison.
+			// (#103 integration board, architect)
+			if (input.prompt.length > input.config.classifier.contextBudget) return undefined;
+			prompt = input.contextBuilder(input.messages ?? [], {
+				budget: input.config.classifier.contextBudget,
+				window: input.config.classifier.conversationWindow,
+			});
+			if (!prompt || prompt.trim() === NEW_SESSION) return undefined;
+		}
+		const model = input.ctx.modelRegistry.findOfType("classifier", input.parsed.provider, input.parsed.id);
+		if (!model) return undefined;
+		const result = await input.ctx.modelRegistry.classify(
+			model,
+			{ state: { prompt }, questions: { complexity: COMPLEXITY_QUESTION } },
+			{ signal: AbortSignal.timeout(input.config.classifier.timeoutMs) },
+		);
+		const choice = result.stopReason === "stop" ? result.answers.complexity : undefined;
+		if (choice?.type !== "choice") return undefined;
+		const complex = choice.probabilities?.complex ?? (choice.choice === "complex" ? 1 : 0);
+		return { signalPath: input.signalPath, tier: complex >= input.config.policy.threshold ? "cloud" : "local" };
+	} catch {
+		// Comparison is best-effort. It must never affect the authoritative decision.
+		return undefined;
+	}
+}
+
 export async function decideTier(input: {
 	config: RouterConfig;
 	prompt: string;
@@ -246,21 +299,52 @@ export async function decideTier(input: {
 	skipClassifier?: boolean;
 	/** Optional router log sink; receives trim and failure lines. */
 	log?: (message: string) => void;
-}): Promise<Decision> {
+	/** Formatter override for deterministic failure-path tests. */
+	contextBuilder?: typeof buildClassifierContext;
+}): Promise<TierClassification> {
 	const { config, prompt, ctx, messages, forced, skipClassifier, log } = input;
-	if (forced) return { tier: forced, score: 0, source: "pin", reason: `pinned ${forced}` };
+	if (forced) return withSignalPath({ tier: forced, score: 0, source: "pin", reason: `pinned ${forced}` }, "off");
 	if (skipClassifier) {
 		const h = heuristicDecision(config, prompt);
-		return { ...h, source: "heuristic", reason: `${h.reason} (classifier back off)` };
+		return withSignalPath({ ...h, source: "heuristic", reason: `${h.reason} (classifier back off)` }, "heuristic");
 	}
-	if (config.classifier.fallback === "heuristic" && !config.classifier.model) return heuristicDecision(config, prompt);
+	if (config.classifier.contextSource === "off") return withSignalPath(heuristicDecision(config, prompt), "off");
+	if (config.classifier.fallback === "heuristic" && !config.classifier.model) return withSignalPath(heuristicDecision(config, prompt), "heuristic");
 
 	const ref = config.classifier.model;
-	if (!ref) return heuristicDecision(config, prompt);
+	if (!ref) return withSignalPath(heuristicDecision(config, prompt), "heuristic");
 	const parsed = splitRef(ref);
-	if (!parsed) return heuristicDecision(config, prompt);
+	if (!parsed) return withSignalPath(heuristicDecision(config, prompt), "heuristic");
 
-	const clipped = prompt.slice(0, config.classifier.stateChars);
+	let classifierPrompt = prompt.slice(0, config.classifier.stateChars);
+	let signalPath: "last-message" | "conversation" = "last-message";
+	let contextFailure: string | undefined;
+	if (config.classifier.contextSource === "conversation") {
+		try {
+			// Never show the classifier *less* than the default path would. When the latest message alone
+			// is larger than the conversation budget, the formatter can only truncate it to that budget —
+			// smaller than `stateChars` — so prefer the last-message path instead. (#103 integration board)
+			if (prompt.length > config.classifier.contextBudget) {
+				throw new Error(
+					`latest message ${prompt.length} chars exceeds contextBudget ${config.classifier.contextBudget}`,
+				);
+			}
+			const formatted = (input.contextBuilder ?? buildClassifierContext)(messages ?? [], {
+				budget: config.classifier.contextBudget,
+				window: config.classifier.conversationWindow,
+			});
+			if (typeof formatted !== "string" || formatted.length === 0) throw new Error("formatter returned empty context");
+			// The formatter is contractually non-throwing: it returns the NEW_SESSION sentinel when it
+			// cannot describe the conversation (empty session, malformed data, internal error).
+			// Classifying that sentinel would be worse than today's behaviour, so treat it as a failure.
+			if (formatted.trim() === NEW_SESSION) throw new Error("formatter produced no usable context");
+			classifierPrompt = formatted;
+			signalPath = "conversation";
+		} catch (error) {
+			contextFailure = error instanceof Error ? error.message : String(error);
+			log?.(`classifier context: ${contextFailure}; falling back to last-message`);
+		}
+	}
 	let classifierError: string | undefined;
 	try {
 		const model = ctx.modelRegistry.findOfType("classifier", parsed.provider, parsed.id);
@@ -269,7 +353,7 @@ export async function decideTier(input: {
 		const result = await ctx.modelRegistry.classify(
 			model,
 			{
-				state: { prompt: clipped },
+				state: { prompt: classifierPrompt },
 				questions,
 			},
 			{ signal: AbortSignal.timeout(config.classifier.timeoutMs) },
@@ -282,17 +366,42 @@ export async function decideTier(input: {
 			const tier: Tier = complex >= threshold ? "cloud" : "local";
 			const gates = parseGateVerdicts(answers, config.gates);
 			const gateSummary = gates ? ` gates=${formatGateSummary(gates)}` : "";
-			return {
+			const decision = withSignalPath({
 				tier,
 				score: complex,
 				source: "classifier",
-				reason: `classifier p(complex)=${complex.toFixed(2)}${gateSummary}`,
+				reason: `classifier p(complex)=${complex.toFixed(2)}${gateSummary}${contextFailure ? ` (context formatter failed: ${contextFailure})` : ""}`,
+				// A context-path fallback is NOT a classifier failure: the classifier answered fine, we
+				// just showed it a different signal. Reporting it as one would let repeated fallbacks
+				// (e.g. an oversized message) trip the classifier backoff and skip the classifier for
+				// a session that was never actually failing. (#103 integration board nit)
+
 				gates,
-			};
+			}, signalPath);
+			if (config.classifier.contextShadow && (signalPath === "last-message" || signalPath === "conversation")) {
+				const alternatePath = signalPath === "last-message" ? "conversation" : "last-message";
+				decision.shadowComparison = Promise.resolve()
+					.then(() => classifyAlternateSignal({
+						config,
+						ctx,
+						parsed,
+						prompt,
+						messages,
+						signalPath: alternatePath,
+						contextBuilder: input.contextBuilder ?? buildClassifierContext,
+					}))
+					.then((alternate) => alternate ? {
+						authoritative: { signalPath, tier },
+						alternate,
+						agree: tier === alternate.tier,
+					} : undefined);
+			}
+			return decision;
 		}
 		throw new Error("classifier returned no parseable complexity answer");
 	} catch (error) {
 		classifierError = error instanceof Error ? error.message : String(error);
+		if (contextFailure) classifierError = `context formatter failed: ${contextFailure}; classifier: ${classifierError}`;
 		log?.(`classifier: ${classifierError}`);
 	}
 
@@ -301,19 +410,19 @@ export async function decideTier(input: {
 	const failure = { ref, message: classifierError ?? "no answer" };
 	if (config.classifier.fallback === "heuristic") {
 		const fallback = heuristicDecision(config, prompt);
-		return {
+		return withSignalPath({
 			...fallback,
 			classifierFailure: failure,
 			reason: `${fallback.reason} (classifier failed: ${failure.message})`,
-		};
+		}, "heuristic");
 	}
-	return {
+	return withSignalPath({
 		tier: config.classifier.fallback,
 		score: 0,
 		source: "heuristic",
 		classifierFailure: failure,
 		reason: `classifier unavailable (${failure.message}), fallback ${config.classifier.fallback}`,
-	};
+	}, "heuristic");
 }
 
 function formatGateSummary(gates: GateVerdicts): string {
