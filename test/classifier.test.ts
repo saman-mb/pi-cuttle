@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import { decideTier, applyPolicy, buildQuestions, heuristicScore, parseGateVerdicts, splitRef } from "../src/classifier.ts";
 import { DEFAULTS } from "../src/config.ts";
+import { NEW_SESSION } from "../src/classifier-context.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 function fakeCtx(classifyResult?: { stopReason: "stop" | "error"; answers: Record<string, unknown> }): ExtensionContext {
@@ -453,4 +454,65 @@ test("decideTier returns gate verdicts when gates are enabled", async () => {
 	assert.equal(d.source, "classifier");
 	assert.equal(d.gates?.struggle?.type, "bool");
 	assert.match(d.reason, /struggle:/);
+});
+
+// Region: integration defect found by the epic board (#103).
+//
+// The formatter is contractually non-throwing — it returns the NEW_SESSION sentinel when it cannot
+// build context. The classifier's fallback only caught throws and empty strings, so a formatter that
+// degraded internally was classified as the literal sentinel instead of falling back to the
+// last-message prompt. Each unit was correct alone; the combination was wrong.
+
+test("a sentinel from the formatter falls back to last-message instead of being classified", async () => {
+	let receivedPrompt: string | undefined;
+	const logs: string[] = [];
+	const ctx = {
+		modelRegistry: {
+			findOfType: () => ({ id: "kev", provider: "llama.cpp" }),
+			classify: async (_model: unknown, input: { state: { prompt: string } }) => {
+				receivedPrompt = input.state.prompt;
+				return { stopReason: "stop", answers: { complexity: { type: "choice", choice: "standard", probabilities: { complex: 0.1 } } } };
+			},
+		},
+	} as unknown as ExtensionContext;
+	const prompt = "do the other thing";
+	const decision = await decideTier({
+		config: { ...DEFAULTS, classifier: { ...DEFAULTS.classifier, model: "llama.cpp/kev", contextSource: "conversation" } },
+		prompt,
+		ctx,
+		// Simulates the built-in formatter degrading on malformed data.
+		contextBuilder: () => NEW_SESSION,
+		log: (message) => logs.push(message),
+	});
+	assert.notEqual(receivedPrompt, NEW_SESSION, "the sentinel must never be classified");
+	assert.equal(receivedPrompt, prompt);
+	assert.match(decision.reason, /no usable context/);
+	assert.match(logs.join("\n"), /falling back to last-message/);
+});
+
+test("conversation context never shows the classifier less than the default path would", async () => {
+	// A single message larger than contextBudget: the formatter could only truncate it to the
+	// (smaller) conversation budget, which is worse than the default stateChars path.
+	let receivedPrompt: string | undefined;
+	const ctx = {
+		modelRegistry: {
+			findOfType: () => ({ id: "kev", provider: "llama.cpp" }),
+			classify: async (_model: unknown, input: { state: { prompt: string } }) => {
+				receivedPrompt = input.state.prompt;
+				return { stopReason: "stop", answers: { complexity: { type: "choice", choice: "standard", probabilities: { complex: 0.1 } } } };
+			},
+		},
+	} as unknown as ExtensionContext;
+	const prompt = "x".repeat(500);
+	const decision = await decideTier({
+		config: {
+			...DEFAULTS,
+			classifier: { ...DEFAULTS.classifier, model: "llama.cpp/kev", contextSource: "conversation", contextBudget: 100, stateChars: 400 },
+		},
+		prompt,
+		ctx,
+		log: () => {},
+	});
+	assert.equal(receivedPrompt, prompt.slice(0, 400), "must fall back to the larger stateChars window");
+	assert.match(decision.reason, /exceeds contextBudget/);
 });
