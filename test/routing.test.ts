@@ -64,14 +64,24 @@ function runtime(cfg: RouterConfig, grant = true): { rt: RouterRuntime; acquired
 
 const baseReq = { model: { id: "auto" }, thinkingLevel: "high" as const, messages: USER };
 
-test("sticky: a continuation keeps the previous state without re-classifying", async () => {
+test("sticky: a continuation keeps the previous state and holds a local slot", async () => {
 	const cfg = config();
 	const { rt, acquired } = runtime(cfg);
 	const state = { tier: "local" as const, modelId: "lmstudio/local-model", phase: "planning" as const, decision: { source: "heuristic" as const, reason: "prior" } };
 	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "continuation" as const, state } as never, ctxWith());
 	assert.equal(route.model.id, "local-model");
 	assert.equal(route.state, state, "state object is reused so pi keeps it");
-	assert.equal(acquired.length, 0, "no new slot on a continuation");
+	assert.deepEqual(acquired, ["local-model:auto"], "slot acquired on continuation");
+});
+
+test("sticky: a saturated local continuation spills to cloud", async () => {
+	const cfg = config();
+	const { rt, acquired } = runtime(cfg, false);
+	const state = { tier: "local" as const, modelId: "lmstudio/local-model", phase: "planning" as const, decision: { source: "heuristic" as const, reason: "prior" } };
+	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "continuation" as const, state } as never, ctxWith());
+	assert.equal(route.model.provider, "cloud");
+	assert.equal(route.state?.tier, "cloud");
+	assert.equal(acquired.length, 0, "no local slot acquired when saturated");
 });
 
 test("reclassify=turn re-decides on each user turn", async () => {

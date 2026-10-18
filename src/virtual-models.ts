@@ -274,7 +274,7 @@ export async function routeRequest(
 		if (escalateCfg?.enabled && state.tier === "local" && signals.errors >= escalateCfg.toolErrors) {
 			const cloudRef = firstResolvable(ctx, cloudCandidates(rt.config, ctx));
 			if (cloudRef) {
-				rt.governor.releaseOne(splitRef(pickLocal(rt.config, ctx, flavor, rt.sizes) ?? "")?.id ?? "");
+					rt.governor.releaseOne(splitRef(state.modelId)?.id ?? "");
 				rt.log?.(`route escalate local->cloud errors=${signals.errors} window=${escalateCfg.window}`);
 				const next: RouterState = {
 					tier: "cloud",
@@ -335,11 +335,42 @@ export async function routeRequest(
 				}
 			}
 		}
-		const ref =
-			state.tier === "local"
-				? firstResolvable(ctx, localCandidates(rt.config, ctx, flavor, rt.sizes, state.decision.score ?? 0))
-				: firstResolvable(ctx, cloudCandidates(rt.config, ctx, state.decision.score ?? 0));
-		return resolveModel(ctx, ref, thinking, state);
+		let ref: string | undefined;
+		let held: Reservation | undefined;
+		if (state.tier === "local") {
+			const reserved = await ensureLocalSlot(rt, ctx, flavor, sessionId, state.decision.score ?? 0);
+			if (reserved.spill) {
+				ref = firstResolvable(ctx, cloudCandidates(rt.config, ctx, state.decision.score ?? 0));
+				if (ref) {
+					const next: RouterState = {
+						...state,
+						tier: "cloud",
+						modelId: ref,
+						decision: { ...state.decision, reason: `${state.decision.reason}; ${reserved.spill}` },
+					};
+					try {
+						return resolveModel(ctx, ref, thinking, next);
+					} catch (error) {
+						throw error;
+					}
+				}
+			} else {
+				held = reserved.reservation;
+				ref = reserved.ref;
+			}
+		}
+		if (!ref) {
+			ref =
+				state.tier === "local"
+					? firstResolvable(ctx, localCandidates(rt.config, ctx, flavor, rt.sizes, state.decision.score ?? 0))
+					: firstResolvable(ctx, cloudCandidates(rt.config, ctx, state.decision.score ?? 0));
+		}
+		try {
+			return resolveModel(ctx, ref, thinking, state);
+		} catch (error) {
+			if (held) rt.governor.release(held);
+			throw error;
+		}
 	}
 
 	const prompt = lastUserText(request.messages);
