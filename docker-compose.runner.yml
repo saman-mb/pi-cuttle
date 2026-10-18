@@ -37,6 +37,10 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - runner-work:/tmp/runner-work
+      # The eval reads the classifier ref from ~/.pi/agent/pi-cuttle.json. HOME is
+      # /root in the container, so mount the host's config there (read-only).
+      # Without this the live eval exits 1 with "no classifier is configured".
+      - ${HOME}/.pi/agent/pi-cuttle.json:/root/.pi/agent/pi-cuttle.json:ro
 
 volumes:
   runner-work:
