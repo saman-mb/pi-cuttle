@@ -77,6 +77,39 @@ describe("LangFuseClient", () => {
 		}
 	});
 
+	it("records a child bypass as not routed (#130)", async () => {
+		const { url, server, requests } = await startMockLangFuseServer();
+		try {
+			const client = new LangFuseClient({
+				enabled: true,
+				provider: "langfuse",
+				baseUrl: url,
+				publicKey: "pk-test",
+				secretKey: "sk-test",
+			});
+
+			await client.bypass({
+				traceId: "session-1-bypass-123",
+				modelId: "opencode-go/gpt-6-luna",
+				kind: "subagent",
+				reason: "subagent child launched on a non-cuttle model, so it never entered the router",
+			});
+
+			assert.equal(requests.length, 1);
+			const req = requests[0] as { url: string; body: Record<string, unknown> };
+			assert.equal(req.url, "/api/public/traces");
+			assert.equal(req.body.name, "pi-cuttle child bypass");
+			const metadata = req.body.metadata as Record<string, unknown>;
+			assert.equal(metadata.routed, false, "a bypass must never look routed");
+			assert.equal(metadata.kind, "subagent");
+			assert.equal(metadata.isSubagent, true);
+			assert.equal(metadata.modelId, "opencode-go/gpt-6-luna");
+		} finally {
+			server.closeAllConnections();
+			server.close();
+		}
+	});
+
 	it("checks health", async () => {
 		const { url, server } = await startMockLangFuseServer();
 		try {

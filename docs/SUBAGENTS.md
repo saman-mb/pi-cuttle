@@ -91,3 +91,13 @@ Set `local.maxConcurrentByFlavor` to bound a policy independently, e.g.
 ```
 
 `/subagents-models` shows the resolved role-to-model mapping on the pi-subagents side.
+
+When observability is enabled, a child that inherits a **non-`cuttle/*`** model is recorded as a
+`pi-cuttle child bypass` trace with `routed: false`, `kind`, and the physical `modelId` it landed
+on. Such a child never entered the router, so it has no routing trace and would otherwise be
+invisible — this is how the fall-through above becomes observable. It is a diagnostic, not an
+error: a role deliberately pinned to a cloud model via `agentOverrides` is legitimate and is
+recorded, never blocked.
+
+Set `PI_CUTTLE_DEBUG=/path/to/log` to get the same signal as a `child bypass kind=… model=…` line
+in the debug log without running LangFuse.

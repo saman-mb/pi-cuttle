@@ -19,7 +19,7 @@
  *          (foreground children, forks). Claiming a child fails pi-subagents' model
  *          verification against its launch candidate.
  */
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { appendFileSync } from "node:fs";
 
 import { loadConfig } from "./config.ts";
@@ -59,6 +59,41 @@ function hasParentSession(ctx: { sessionManager?: { getHeader?: () => { parentSe
 	} catch {
 		return false;
 	}
+}
+
+/**
+ * Record a child session that never entered the router (#130).
+ *
+ * A child whose launch model is not a `cuttle/*` virtual model never calls `route()`, so no routing
+ * trace can exist for it: its tier, model and cost are invisible. That is exactly the gap that let a
+ * local-only parent delegate to cloud children unseen. Emitting a bypass observation makes the
+ * fall-through observable in LangFuse (`routed: false`) and in the debug log.
+ *
+ * Deliberately records rather than throws: a child deliberately pinned to a cloud model is
+ * legitimate (`subagents.agentOverrides.<role>.model`), so this is a diagnostic, not a gate.
+ */
+function observeChildBypass(rt: RouterRuntime, ctx: ExtensionContext, kind: "subagent" | "parent-session"): void {
+	const model = ctx.model;
+	const ref = model?.provider && model?.id ? `${model.provider}/${model.id}` : undefined;
+	// A child that did route is already covered by the routing trace, which carries `isSubagent`.
+	if (ref && ref.startsWith(`${VIRTUAL_PROVIDER}/`)) return;
+	const sessionId = safeSessionId(ctx) ?? "unknown";
+	let parentSession: string | undefined;
+	try {
+		const header = ctx.sessionManager?.getHeader?.() as { parentSession?: string } | null | undefined;
+		parentSession = header?.parentSession ?? undefined;
+	} catch {
+		parentSession = undefined;
+	}
+	const reason =
+		kind === "subagent"
+			? "subagent child launched on a non-cuttle model, so it never entered the router"
+			: "session with a parent launched on a non-cuttle model, so it never entered the router";
+	rt.log?.(`child bypass kind=${kind} model=${ref ?? "unknown"} session=${sessionId}`);
+	if (!rt.langfuse) return;
+	void rt.langfuse
+		.bypass({ traceId: `${sessionId}-bypass-${Date.now()}`, modelId: ref ?? "unknown", kind, parentSession, reason })
+		.catch((error) => rt.log?.(`langfuse bypass failed: ${error instanceof Error ? error.message : String(error)}`));
 }
 
 export default function modelRouter(pi: ExtensionAPI): void {
@@ -102,10 +137,12 @@ export default function modelRouter(pi: ExtensionAPI): void {
 		// route arrive on a `cuttle/*` model and are handled by the guard above.
 		if (isSubagent()) {
 			log?.("session_start subagent child, leaving model unchanged");
+			observeChildBypass(rt, ctx, "subagent");
 			return;
 		}
 		if (hasParentSession(ctx)) {
 			log?.("session_start child session, leaving model unchanged");
+			observeChildBypass(rt, ctx, "parent-session");
 			return;
 		}
 		if (rt.config.catalog.local.length === 0 && rt.config.catalog.cloud.length === 0) {

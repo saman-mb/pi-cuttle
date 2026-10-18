@@ -22,6 +22,23 @@ export interface RoutingTrace {
 	enforceUserCeiling?: boolean;
 }
 
+/**
+ * A child session that inherited a non-`cuttle/*` model (#130). The router never saw it, so it has
+ * no routing trace; recording the bypass is the only way its tier becomes visible.
+ */
+export interface ChildBypassObservation {
+	traceId: string;
+	/** Trace name; defaults to "pi-cuttle child bypass". */
+	name?: string;
+	/** The physical model the child actually landed on. */
+	modelId: string;
+	/** Why the child was not claimed. */
+	kind: "subagent" | "parent-session";
+	/** The session's parent, when the runtime exposes it. */
+	parentSession?: string;
+	reason: string;
+}
+
 export interface LangFuseTrace {
 	id: string;
 	timestamp: string;
@@ -45,9 +62,22 @@ export class LangFuseClient {
 		this.auth = `Basic ${Buffer.from(`${cfg.publicKey}:${cfg.secretKey}`).toString("base64")}`;
 	}
 
+	/** POST one trace. A 409 means the trace already exists, which is harmless. */
+	private async post(body: unknown): Promise<void> {
+		const response = await fetch(`${this.baseUrl}/api/public/traces`, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Authorization: this.auth,
+			},
+			body: JSON.stringify(body),
+		});
+		if (response.ok || response.status === 409) return;
+		throw new Error(`LangFuse trace failed: ${response.status} ${await response.text()}`);
+	}
+
 	async trace(decision: RoutingTrace): Promise<void> {
-		const url = `${this.baseUrl}/api/public/traces`;
-		const body = {
+		await this.post({
 			id: decision.traceId,
 			name: decision.name,
 			metadata: {
@@ -63,26 +93,30 @@ export class LangFuseClient {
 				enforceUserCeiling: decision.enforceUserCeiling,
 			},
 			timestamp: new Date().toISOString(),
-		};
+		});
+	}
 
-		try {
-			const response = await fetch(url, {
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					Authorization: this.auth,
-				},
-				body: JSON.stringify(body),
-			});
-			if (!response.ok) {
-				// 409 means the trace already exists, which is harmless.
-				if (response.status === 409) return;
-				throw new Error(`LangFuse trace failed: ${response.status} ${await response.text()}`);
-			}
-		} catch (error) {
-			// Best-effort: never throw. Callers may log if they wish.
-			throw error;
-		}
+	/**
+	 * Record a child session that inherited a non-`cuttle/*` model (#130).
+	 *
+	 * Such a child never calls `route()`, so no routing trace can exist for it and its tier and cost
+	 * are invisible. Emitting `routed: false` plus the model it actually landed on makes the
+	 * fall-through docs/SUBAGENTS.md warns about observable instead of silent.
+	 */
+	async bypass(observation: ChildBypassObservation): Promise<void> {
+		await this.post({
+			id: observation.traceId,
+			name: observation.name ?? "pi-cuttle child bypass",
+			metadata: {
+				routed: false,
+				kind: observation.kind,
+				isSubagent: observation.kind === "subagent",
+				modelId: observation.modelId,
+				parentSession: observation.parentSession,
+				reason: observation.reason,
+			},
+			timestamp: new Date().toISOString(),
+		});
 	}
 
 	async fetchTraces(from?: Date, to?: Date, tags?: string[]): Promise<LangFuseTrace[]> {

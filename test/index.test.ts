@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -210,6 +210,77 @@ test("session_start does not claim a subagent child's launch model", async () =>
 	} finally {
 		if (original === undefined) delete process.env[SUBAGENT_CHILD_ENV];
 		else process.env[SUBAGENT_CHILD_ENV] = original;
+	}
+});
+
+test("a subagent child on a non-cuttle model is recorded as a router bypass (#130)", async () => {
+	const originalSubagent = process.env[SUBAGENT_CHILD_ENV];
+	const originalDebug = process.env.PI_CUTTLE_DEBUG;
+	const dir = mkdtempSync(join(tmpdir(), "cuttle-bypass-"));
+	const debugPath = join(dir, "debug.log");
+	process.env[SUBAGENT_CHILD_ENV] = "1";
+	process.env.PI_CUTTLE_DEBUG = debugPath;
+	try {
+		await withTempConfig(
+			{
+				autoSelect: true,
+				local: { preload: false, pinClassifier: false },
+				catalog: { local: ["lmstudio/local-model"], cloud: ["cloud/big-model"] },
+			},
+			async () => {
+				const { pi, events, calls } = createMockPI();
+				modelRouter(pi);
+				const handler = (events["session_start"] ?? [])[0];
+				assert.ok(handler);
+				await handler({}, createContext({ provider: "opencode-go", id: "gpt-6-luna" }));
+				assert.equal(calls.setModel.length, 0, "setModel must not claim a subagent child");
+				const log = readFileSync(debugPath, "utf8");
+				assert.match(
+					log,
+					/child bypass kind=subagent model=opencode-go\/gpt-6-luna/,
+					"a child that never entered the router must be recorded, not silently skipped",
+				);
+			},
+		);
+	} finally {
+		if (originalSubagent === undefined) delete process.env[SUBAGENT_CHILD_ENV];
+		else process.env[SUBAGENT_CHILD_ENV] = originalSubagent;
+		if (originalDebug === undefined) delete process.env.PI_CUTTLE_DEBUG;
+		else process.env.PI_CUTTLE_DEBUG = originalDebug;
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("a subagent child already on cuttle/* is not recorded as a bypass", async () => {
+	const originalSubagent = process.env[SUBAGENT_CHILD_ENV];
+	const originalDebug = process.env.PI_CUTTLE_DEBUG;
+	const dir = mkdtempSync(join(tmpdir(), "cuttle-bypass-"));
+	const debugPath = join(dir, "debug.log");
+	process.env[SUBAGENT_CHILD_ENV] = "1";
+	process.env.PI_CUTTLE_DEBUG = debugPath;
+	try {
+		await withTempConfig(
+			{
+				autoSelect: true,
+				local: { preload: false, pinClassifier: false },
+				catalog: { local: ["lmstudio/local-model"], cloud: ["cloud/big-model"] },
+			},
+			async () => {
+				const { pi, events } = createMockPI();
+				modelRouter(pi);
+				const handler = (events["session_start"] ?? [])[0];
+				assert.ok(handler);
+				await handler({}, createContext({ provider: "cuttle", id: "local" }));
+				const log = existsSync(debugPath) ? readFileSync(debugPath, "utf8") : "";
+				assert.doesNotMatch(log, /child bypass/, "a routed child is already covered by its routing trace");
+			},
+		);
+	} finally {
+		if (originalSubagent === undefined) delete process.env[SUBAGENT_CHILD_ENV];
+		else process.env[SUBAGENT_CHILD_ENV] = originalSubagent;
+		if (originalDebug === undefined) delete process.env.PI_CUTTLE_DEBUG;
+		else process.env.PI_CUTTLE_DEBUG = originalDebug;
+		rmSync(dir, { recursive: true, force: true });
 	}
 });
 
