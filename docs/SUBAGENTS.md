@@ -101,3 +101,20 @@ recorded, never blocked.
 
 Set `PI_CUTTLE_DEBUG=/path/to/log` to get the same signal as a `child bypass kind=… model=…` line
 in the debug log without running LangFuse.
+
+### Auditing real launches
+
+```bash
+npm run eval:subagent-audit -- --days 7      # add --json for machine output
+```
+
+This reads the `*_meta.json` artifacts pi-subagents writes per run and resolves each run's parent
+session to find the model active at launch, then judges the launch against the contract that parent
+was under. It classifies every child as `routed`, `bypass-override` (launched on a non-router model
+by explicit request), `bypass-inherited` (inherited a non-router model), or `crash` (inherited
+`cuttle/*` but never loaded the router — see #131), and exits non-zero when a local-only parent let
+a child reach the cloud.
+
+This is the check the offline eval cannot perform: its `subagent-policy` fixtures run `flavor: auto`
+on an in-process fake child, so a real launch contract — ambient extensions disabled, a model chosen
+by the launcher — never occurs. Run the audit against real history instead.
