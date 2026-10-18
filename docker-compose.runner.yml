@@ -1,0 +1,34 @@
+# Self-hosted GitHub Actions runner for pi-cuttle
+# 
+# This runs the runner in Docker on your Mac, reaching the native llama.cpp
+# server at host.docker.internal:9931 (Metal GPU acceleration).
+#
+# Setup:
+#   1. Go to GitHub → Settings → Actions → Runners → New self-hosted runner
+#   2. Generate a token and save it to .env as RUNNER_TOKEN
+#   3. Run: docker compose -f docker-compose.runner.yml up -d
+#
+# The runner will auto-start on Docker Desktop launch (restart: unless-stopped).
+# Ensure "Start Docker Desktop when you sign in" is enabled in Docker Desktop settings.
+
+services:
+  runner:
+    image: ghcr.io/actions/actions-runner:latest
+    container_name: cuttle-runner
+    restart: unless-stopped
+    environment:
+      - RUNNER_REPOSITORY_URL=https://github.com/saman-mb/pi-cuttle
+      - RUNNER_TOKEN=${RUNNER_TOKEN}
+      - RUNNER_NAME=macos-arm64
+      - RUNNER_LABELS=self-hosted,macOS,ARM64
+      - RUNNER_GROUP=default
+    volumes:
+      # Persist runner configuration across restarts
+      - runner-data:/home/runner/_work
+    # The runner needs access to the host's llama.cpp server
+    # host.docker.internal is automatically available in Docker Desktop
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  runner-data:
