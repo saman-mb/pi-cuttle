@@ -47,29 +47,63 @@ jobs:
       - run: npm test
       - run: npm run typecheck
 
+      # Ask the registry, not git history (#100).
+      #
+      # The previous check compared package.json against `HEAD~1`. That is unreliable: when the
+      # version bump is not the last commit of a push — a merge commit, or a squash that carries
+      # other changes alongside the bump — `HEAD~1` already contains the new version, the check
+      # reports "unchanged", and a real release is silently skipped while the run stays green.
+      # Comparing against npm answers the question we actually care about: is this version on the
+      # registry yet? That also makes a re-run idempotent instead of error-prone.
       - name: Decide whether to publish
         id: check
         run: |
-          EVENT="${{ github.event_name }}"
-          if [ "$EVENT" = "push" ]; then
-            PREV_VERSION=$(git show HEAD~1:package.json 2>/dev/null | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version" 2>/dev/null || echo "")
-            CURR_VERSION=$(node -p "require('./package.json').version")
-            if [ -n "$PREV_VERSION" ] && [ "$PREV_VERSION" = "$CURR_VERSION" ]; then
-              echo "publish=false" >> $GITHUB_OUTPUT
-              echo "reason=package.json version unchanged" >> $GITHUB_OUTPUT
-            else
-              echo "publish=true" >> $GITHUB_OUTPUT
-              echo "reason=version bumped to $CURR_VERSION" >> $GITHUB_OUTPUT
-            fi
+          PKG_NAME=$(node -p "require('./package.json').name")
+          CURR_VERSION=$(node -p "require('./package.json').version")
+          echo "version=$CURR_VERSION" >> "$GITHUB_OUTPUT"
+
+          PUBLISHED=$(npm view "${PKG_NAME}@${CURR_VERSION}" version 2>/dev/null || echo "")
+          if [ "$PUBLISHED" = "$CURR_VERSION" ]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "reason=${PKG_NAME}@${CURR_VERSION} is already on the registry" >> "$GITHUB_OUTPUT"
           else
-            echo "publish=true" >> $GITHUB_OUTPUT
-            echo "reason=$EVENT" >> $GITHUB_OUTPUT
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "reason=${PKG_NAME}@${CURR_VERSION} is not on the registry" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Publish
+        id: publish
         if: steps.check.outputs.publish == 'true'
         run: npm publish --provenance --access public --tag "${{ github.event.inputs.tag || 'latest' }}"
 
+      # A skip must never be mistakable for a release: say which version was already there and why
+      # nothing happened, in both the log and the job summary. (A no-op re-run is not a failure.)
       - name: Skip publish
         if: steps.check.outputs.publish == 'false'
-        run: echo "Skipping npm publish — ${{ steps.check.outputs.reason }}"
+        run: |
+          echo "::notice::Skipped npm publish — ${{ steps.check.outputs.reason }}"
+          {
+            echo "### npm publish skipped"
+            echo ""
+            echo "\`${{ steps.check.outputs.reason }}\`"
+            echo ""
+            echo "This run published **nothing**. If you expected a release, bump \`package.json\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Post-condition: if we claimed to publish, the registry must actually serve it.
+      - name: Verify the release is on the registry
+        if: steps.check.outputs.publish == 'true'
+        run: |
+          PKG_NAME=$(node -p "require('./package.json').name")
+          VERSION="${{ steps.check.outputs.version }}"
+          for attempt in 1 2 3 4 5 6; do
+            FOUND=$(npm view "${PKG_NAME}@${VERSION}" version 2>/dev/null || echo "")
+            if [ "$FOUND" = "$VERSION" ]; then
+              echo "::notice::${PKG_NAME}@${VERSION} is live on the registry"
+              exit 0
+            fi
+            echo "attempt $attempt: not visible yet, waiting"
+            sleep 20
+          done
+          echo "::error::Publish reported success but ${PKG_NAME}@${VERSION} is not on the registry"
+          exit 1
