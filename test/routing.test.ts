@@ -84,6 +84,30 @@ test("sticky: a saturated local continuation spills to cloud", async () => {
 	assert.equal(acquired.length, 0, "no local slot acquired when saturated");
 });
 
+test("sticky: a local continuation falls back to cloud when the local catalog disappears", async () => {
+	const cfg = config();
+	const { rt, acquired } = runtime(cfg);
+	const state = { tier: "local" as const, modelId: "lmstudio/local-model", phase: "planning" as const, decision: { source: "heuristic" as const, reason: "prior" } };
+	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "continuation" as const, state } as never, ctxWith({ missingLocal: true }));
+	assert.equal(route.model.provider, "cloud");
+	assert.equal(route.state?.tier, "cloud");
+	assert.equal(acquired.length, 0, "no slot acquired for missing local models");
+});
+
+test("sticky: a cloud continuation falls back to local when the cloud catalog disappears", async () => {
+	const cfg = config();
+	const { rt, acquired } = runtime(cfg);
+	const state = { tier: "cloud" as const, modelId: "cloud/big", phase: "planning" as const, decision: { source: "heuristic" as const, reason: "prior" } };
+	const ctx = ctxWith();
+	const original = ctx.modelRegistry.find.bind(ctx.modelRegistry);
+	(ctx.modelRegistry as unknown as { find: typeof original }).find = (provider: string, id: string) =>
+		provider === "cloud" ? undefined : original(provider, id);
+	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "continuation" as const, state } as never, ctx);
+	assert.equal(route.model.provider, "lmstudio");
+	assert.equal(route.state?.tier, "local");
+	assert.deepEqual(acquired, ["local-model:auto"], "local slot acquired when falling back from cloud");
+});
+
 test("reclassify=turn re-decides on each user turn", async () => {
 	const cfg = config({ policy: { ...DEFAULTS.policy, reclassify: "turn", mode: "complexity" } });
 	const { rt } = runtime(cfg);

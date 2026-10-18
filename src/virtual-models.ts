@@ -337,36 +337,38 @@ export async function routeRequest(
 		}
 		let ref: string | undefined;
 		let held: Reservation | undefined;
+		let effectiveTier: Tier = state.tier;
+		let reasonSuffix: string | undefined;
+
 		if (state.tier === "local") {
 			const reserved = await ensureLocalSlot(rt, ctx, flavor, sessionId, state.decision.score ?? 0);
-			if (reserved.spill) {
-				ref = firstResolvable(ctx, cloudCandidates(rt.config, ctx, state.decision.score ?? 0));
-				if (ref) {
-					const next: RouterState = {
-						...state,
-						tier: "cloud",
-						modelId: ref,
-						decision: { ...state.decision, reason: `${state.decision.reason}; ${reserved.spill}` },
-					};
-					try {
-						return resolveModel(ctx, ref, thinking, next);
-					} catch (error) {
-						throw error;
-					}
-				}
-			} else {
+			if (reserved.ref) {
 				held = reserved.reservation;
 				ref = reserved.ref;
+			} else if (reserved.spill) {
+				effectiveTier = "cloud";
+				reasonSuffix = reserved.spill;
 			}
 		}
 		if (!ref) {
-			ref =
-				state.tier === "local"
-					? firstResolvable(ctx, localCandidates(rt.config, ctx, flavor, rt.sizes, state.decision.score ?? 0))
-					: firstResolvable(ctx, cloudCandidates(rt.config, ctx, state.decision.score ?? 0));
+			ref = firstResolvable(ctx, cloudCandidates(rt.config, ctx, state.decision.score ?? 0));
 		}
+		if (!ref) {
+			const fallback = await ensureLocalSlot(rt, ctx, flavor, sessionId, state.decision.score ?? 0);
+			if (fallback.ref) {
+				held = fallback.reservation;
+				ref = fallback.ref;
+				effectiveTier = "local";
+				reasonSuffix = "cloud catalog unavailable, routed local";
+			}
+		}
+		if (!ref) throw new Error("pi-cuttle: no configured model resolves (check catalog.local/cloud)");
+		const next: RouterState =
+			effectiveTier === state.tier
+				? state
+				: { ...state, tier: effectiveTier, modelId: ref, decision: { ...state.decision, reason: `${state.decision.reason}; ${reasonSuffix}` } };
 		try {
-			return resolveModel(ctx, ref, thinking, state);
+			return resolveModel(ctx, ref, thinking, next);
 		} catch (error) {
 			if (held) rt.governor.release(held);
 			throw error;
