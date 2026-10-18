@@ -96,6 +96,36 @@ docker compose -f docker-compose.langfuse.yml down -v
 | `LANGFUSE_INIT_USER_EMAIL` | No | Initial admin email | `admin@example.com` |
 | `LANGFUSE_INIT_USER_PASSWORD` | No | Initial admin password | `password` |
 
+## Full pi session tracing (official LangFuse plugin)
+
+For complete pi observability — prompts, responses, tool calls, and model
+generations — install the official LangFuse pi extension:
+
+```bash
+pi install npm:@langfuse/pi-observability-plugin
+```
+
+Create `~/.pi/agent/langfuse.json`:
+
+```json
+{
+  "publicKey": "pk-pi-cuttle-...",
+  "secretKey": "sk-pi-cuttle-...",
+  "baseUrl": "http://localhost:3000",
+  "userId": "your-name",
+  "environment": "local"
+}
+```
+
+The plugin reads this file automatically. It creates one trace per user prompt
+and nests model generations, tool calls, and subagents under it.
+
+To disable tracing for a single run:
+
+```bash
+LANGFUSE_TRACING_ENABLED=false pi
+```
+
 ## Integration with pi-cuttle
 
 Add the auto-provisioned keys to your pi-cuttle config (`~/.pi/agent/pi-cuttle.json`):
@@ -115,6 +145,9 @@ Add the auto-provisioned keys to your pi-cuttle config (`~/.pi/agent/pi-cuttle.j
 Each routing decision then creates a LangFuse trace containing tier, model, flavor,
 complexity score, thinking level, and subagent policy state. Annotate misroutes with
 the `misroute` tag in the LangFuse UI and export them via `npm run eval:export-misroutes`.
+
+The two integrations coexist: the official plugin captures the full pi session,
+while pi-cuttle emits focused routing-decision traces.
 
 ## Troubleshooting
 
