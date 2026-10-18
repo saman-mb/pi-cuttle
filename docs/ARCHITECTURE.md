@@ -48,7 +48,10 @@ or the `pi-subagents` package.
    `policy.reclassify: "turn"` opts into per-turn re-classification. Two evidence-driven
    exceptions keep the decision honest: struggle escalation (#41) moves a flailing local
    session to cloud mid-turn and steps back down after `cleanTurns` clean user turns;
-   a failure-driven escalation (#37) re-decides on the next user turn.
+   a failure-driven escalation (#37) re-decides on the next user turn. Both exceptions apply
+   to sessions that may route cloud (`cuttle/auto`, `cuttle/cloud`, `cuttle/orchestrator`): the always-local flavors
+   (`cuttle/local`, `cuttle/fast-local`, `cuttle/big-local`) are hard-pinned and never escalate
+   to cloud — when local is unavailable they fail with an actionable error instead (#112).
 2. **All models come from pi's registry.** `route()` resolves every physical model and
    every classifier through `ctx.modelRegistry`. It does not talk to any local server
    directly, so it works with any provider pi already supports (LM Studio, llama.cpp router,
@@ -74,7 +77,7 @@ or the `pi-subagents` package.
 | `src/config.ts` | Load and merge `pi-cuttle.json` over defaults. |
 | `src/governor.ts` | Cross-process slot broker (concurrency cap only). |
 | `src/classifier.ts` | `decideTier`: classifier call via pi's registry, with heuristic fallback. |
-| `src/virtual-models.ts` | Register `cuttle/auto`, `cuttle/local`, `cuttle/cloud`, `cuttle/fast-local`; `route()` policy + spill. |
+| `src/virtual-models.ts` | Register `cuttle/auto`, `cuttle/local`, `cuttle/cloud`, `cuttle/fast-local`, `cuttle/big-local`, `cuttle/orchestrator`; `route()` policy + local-only pin. |
 | `src/telemetry.ts` | Decision ledger + `/cuttle stats` aggregation (metadata only). |
 | `src/commands.ts` | `/cuttle` command family (on/off, status, init, models, policy, limit, doctor, stats, shadow-report). |
 | `src/shadow.ts` | Phase-2 shadow-mode gate ledger and `/cuttle shadow-report` aggregation. |

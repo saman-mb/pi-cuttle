@@ -54,9 +54,10 @@ code does not need to know about roles:
 | Virtual model | Behaviour |
 |---|---|
 | `cuttle/auto` | Classifier decides per session |
-| `cuttle/local` | Local-preferred; spills to cloud when saturated |
+| `cuttle/local` | Always local; errors when local is unavailable (never spills) |
 | `cuttle/cloud` | Always cloud |
-| `cuttle/fast-local` | Local, smallest model first |
+| `cuttle/fast-local` | Always local; fastest/smallest model first |
+| `cuttle/big-local` | Always local; largest model first |
 
 ```json
 {
@@ -77,7 +78,8 @@ Per-run override still works: `subagent({ agent: "scout", model: "cuttle/local" 
 
 Children run in separate processes, so the local cap is enforced on the filesystem
 (`local.slotDir`), not in memory. With `local.maxConcurrent: 1`, a fanout of N children allows
-one local request at a time; the rest spill to cloud or wait per `local.onFull`.
+one local request at a time; the rest wait per `local.onFull` and then error for the
+always-local flavors. Only `cuttle/auto` (and other flavours that may route cloud) spill.
 
 Set `local.maxConcurrentByFlavor` to bound a policy independently, e.g.
 `{ "fast-local": 1, "local": 1 }`.

@@ -8,7 +8,7 @@ import { DEFAULTS } from "../src/config.ts";
 import type { LocalGovernor } from "../src/governor.ts";
 
 import type { RouterConfig } from "../src/types.ts";
-import { looksLikeLocalFailure, routeRequest, type RouterRuntime } from "../src/virtual-models.ts";
+import { isLocalOnlyFlavor, looksLikeLocalFailure, routeRequest, type RouterRuntime } from "../src/virtual-models.ts";
 
 const USER: Message[] = [{ role: "user", content: [{ type: "text", text: "do the thing" }] }] as unknown as Message[];
 
@@ -42,11 +42,18 @@ function ctxWith(
 	} as unknown as ExtensionContext;
 }
 
-function runtime(cfg: RouterConfig, grant = true): { rt: RouterRuntime; acquired: string[]; released: string[] } {
+type AcquireCall = { key: string; sessionId?: string; flavor?: string; waitMs?: number };
+
+function runtime(
+	cfg: RouterConfig,
+	grant = true,
+): { rt: RouterRuntime; acquired: string[]; released: string[]; acquireCalls: AcquireCall[] } {
 	const acquired: string[] = [];
 	const released: string[] = [];
+	const acquireCalls: AcquireCall[] = [];
 	const governor = {
-		acquire: async (key: string, o?: { flavor?: string }) => {
+		acquire: async (key: string, o?: { sessionId?: string; flavor?: string; waitMs?: number }) => {
+			acquireCalls.push({ key, ...(o ?? {}) });
 			if (!grant) return null;
 			acquired.push(`${key}:${o?.flavor ?? ""}`);
 			return { id: "r1", modelKey: key, file: "", pid: 1, startedAt: 0, flavor: o?.flavor };
@@ -66,7 +73,7 @@ function runtime(cfg: RouterConfig, grant = true): { rt: RouterRuntime; acquired
 		classifierFailures: 0,
 		classifierBackoffUntil: 0,
 	};
-	return { rt, acquired, released };
+	return { rt, acquired, released, acquireCalls };
 }
 
 const baseReq = { model: { id: "auto" }, thinkingLevel: "high" as const, messages: USER };
@@ -475,4 +482,138 @@ test("a successful classification clears the recorded failure (#53)", async () =
 	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "user" } as never, ctx);
 	assert.equal(route.state?.decision.source, "classifier");
 	assert.equal(rt.lastClassifierError, undefined, "successful classification clears the failure");
+});
+
+// --- #112: always-local flavors (cuttle/local, fast-local, big-local) must never route to cloud ---
+
+const LOCAL_ONLY_FLAVORS = ["local", "fast-local", "big-local"] as const;
+
+/** Run `fn`, require it to reject with an Error, and assert each pattern against its message. */
+async function assertRejectsWith(fn: () => Promise<unknown>, patterns: RegExp[]): Promise<Error> {
+	let caught: unknown;
+	try {
+		await fn();
+	} catch (error) {
+		caught = error;
+	}
+	assert.ok(caught instanceof Error, `expected a rejection; got ${caught === undefined ? "a resolved value" : String(caught)}`);
+	for (const pattern of patterns) assert.match(caught.message, pattern);
+	return caught;
+}
+
+test("#112 (I): isLocalOnlyFlavor pins the three local flavors, not orchestrator/auto/cloud", () => {
+	assert.equal(isLocalOnlyFlavor("orchestrator"), false);
+	for (const flavor of LOCAL_ONLY_FLAVORS) {
+		assert.equal(isLocalOnlyFlavor(flavor), true, `${flavor} must be local-only`);
+	}
+	assert.equal(isLocalOnlyFlavor("auto"), false);
+	assert.equal(isLocalOnlyFlavor("cloud"), false);
+});
+
+test("#112 (A): sticky cloud state does not survive a switch to big-local", async () => {
+	const cfg = config();
+	const { rt, acquired } = runtime(cfg);
+	const state = { tier: "cloud" as const, modelId: "cloud/big", phase: "planning" as const, decision: { source: "heuristic" as const, reason: "prior" } };
+	const route = await routeRequest(rt, "big-local", { ...baseReq, reason: "user", state } as never, ctxWith());
+	assert.equal(route.model.provider, "lmstudio");
+	assert.equal(route.model.id, "local-model");
+	assert.equal(route.state?.tier, "local");
+	assert.deepEqual(acquired, ["local-model:big-local"], "big-local holds a local slot");
+});
+
+test("#112 (B): a saturated big-local rejects instead of spilling to cloud", async () => {
+	const cfg = config();
+	const { rt, acquired } = runtime(cfg, false); // governor refuses every slot
+	await assertRejectsWith(
+		() => routeRequest(rt, "big-local", { ...baseReq, reason: "user" } as never, ctxWith()),
+		[/cuttle\/big-local is local-only/, /local full/, /local\.maxConcurrent/],
+	);
+	assert.equal(acquired.length, 0, "no cloud model was returned");
+});
+
+test("#112 (C): an unresolvable local ref on big-local rejects instead of spilling", async () => {
+	const cfg = config();
+	const { rt } = runtime(cfg);
+	await assertRejectsWith(
+		() => routeRequest(rt, "big-local", { ...baseReq, reason: "user" } as never, ctxWith({ missingLocal: true })),
+		[/not in pi's catalog/, /catalog\.local/],
+	);
+});
+
+test("#112 (C2): a local-only turn over the local window rejects instead of spilling", async () => {
+	const cfg = config();
+	const { rt } = runtime(cfg);
+	await assertRejectsWith(
+		() => routeRequest(rt, "big-local", { ...baseReq, reason: "user" } as never, ctxWith({ window: 1000, tokens: 999 })),
+		[/cuttle\/big-local is local-only/, /context exceeds local window/, /larger context window/],
+	);
+});
+
+test("#112 (D): struggle escalation never fires for a local-only flavor", async () => {
+	const cfg = config({
+		policy: { ...DEFAULTS.policy, escalate: { enabled: true, window: 8, toolErrors: 1, cleanTurns: 2 } },
+	});
+	const { rt } = runtime(cfg);
+	const state = { tier: "local" as const, modelId: "lmstudio/local-model", phase: "implementation" as const, decision: { source: "classifier" as const, reason: "prior" } };
+	const route = await routeRequest(rt, "big-local", { ...baseReq, reason: "continuation", state, messages: TOOL_ERRORS } as never, ctxWith());
+	assert.equal(route.model.provider, "lmstudio");
+	assert.equal(route.state?.tier, "local");
+	assert.equal(route.state?.escalatedFrom, undefined);
+});
+
+test("#112 (E): phase policy cannot override the local-only pin", async () => {
+	const cfg = config({ policy: { ...DEFAULTS.policy, mode: "phase", phase: { plan: "cloud", implement: "cloud" } } });
+	const { rt } = runtime(cfg);
+	const route = await routeRequest(rt, "big-local", { ...baseReq, reason: "user" } as never, ctxWith());
+	assert.equal(route.model.provider, "lmstudio");
+	assert.equal(route.model.id, "local-model");
+	assert.equal(route.state?.tier, "local");
+});
+
+test("#112 (F): a retry after a local failure does not switch to cloud on big-local", async () => {
+	const cfg = config();
+	const { rt, released } = runtime(cfg);
+	const request = {
+		...baseReq,
+		reason: "retry" as const,
+		failed: {
+			model: { provider: "lmstudio", id: "local-model" },
+			message: { provider: "lmstudio", model: "local-model", errorMessage: "out of memory" },
+		},
+	};
+	await assertRejectsWith(() => routeRequest(rt, "big-local", request as never, ctxWith()), [/local provider failure/]);
+	assert.ok(released.includes("local-model"), "the failed local slot is released");
+});
+
+test("#112 (G): a direct request with a missing local ref rejects on big-local", async () => {
+	const cfg = config();
+	const { rt } = runtime(cfg);
+	await assertRejectsWith(
+		() => routeRequest(rt, "big-local", { ...baseReq, reason: "direct" } as never, ctxWith({ missingLocal: true })),
+		[/local-only/, /catalog\.local/],
+	);
+});
+
+test("#112: a direct big-local request bypasses the governor by design but never routes cloud", async () => {
+	// Direct = compaction / extension streamSimple(): no completion hook to release a held slot,
+	// and compaction is the safety valve that reduces context (see #119). The pin still holds.
+	const cfg = config();
+	const { rt, acquireCalls, released } = runtime(cfg, false);
+	const route = await routeRequest(rt, "big-local", { ...baseReq, reason: "direct" } as never, ctxWith());
+	assert.equal(route.model.provider, "lmstudio");
+	assert.equal(route.model.id, "local-model");
+	assert.equal(acquireCalls.length, 0, "direct requests do not take a governor slot");
+	assert.equal(released.length, 0, "nothing to release");
+});
+
+test("#112 (H): local.onFull=wait is forwarded to the governor and never falls back to cloud", async () => {
+	const cfg = config({ local: { ...DEFAULTS.local, onFull: "wait", waitMs: 20000 } });
+	const { rt, acquireCalls } = runtime(cfg, false); // governor refuses every slot
+	await assertRejectsWith(
+		() => routeRequest(rt, "big-local", { ...baseReq, reason: "user" } as never, ctxWith()),
+		[/cuttle\/big-local is local-only/, /local full/],
+	);
+	assert.equal(acquireCalls.length, 1, "the governor was asked exactly once");
+	assert.equal(acquireCalls[0]?.waitMs, 20000, "the wait budget was forwarded");
+	assert.equal(acquireCalls[0]?.flavor, "big-local");
 });
