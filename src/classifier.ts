@@ -366,7 +366,11 @@ export async function decideTier(input: {
 				score: complex,
 				source: "classifier",
 				reason: `classifier p(complex)=${complex.toFixed(2)}${gateSummary}${contextFailure ? ` (context formatter failed: ${contextFailure})` : ""}`,
-				...(contextFailure ? { classifierFailure: { ref, message: `context formatter failed: ${contextFailure}` } } : {}),
+				// A context-path fallback is NOT a classifier failure: the classifier answered fine, we
+				// just showed it a different signal. Reporting it as one would let repeated fallbacks
+				// (e.g. an oversized message) trip the classifier backoff and skip the classifier for
+				// a session that was never actually failing. (#103 integration board nit)
+
 				gates,
 			}, signalPath);
 			if (config.classifier.contextShadow && (signalPath === "last-message" || signalPath === "conversation")) {
