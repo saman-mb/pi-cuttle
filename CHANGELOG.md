@@ -3,6 +3,36 @@
 All notable changes to this project. Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [SemVer](https://semver.org/).
 
+## [0.4.0] — 2026-10-18
+
+### Added
+
+- **`/cuttle init`** first-run wizard — interactively picks classifier, local, and cloud models
+  and writes a working `pi-cuttle.json` (#46).
+- **`capabilities`** config map — optional `provider/model -> [0,1]` overrides that replace the
+  context-window proxy for "smallest adequate model" selection.
+- **Cloud cost ordering** — among cloud models that fit the complexity score, the router now
+  picks the cheapest (per pi's registry cost) before falling back to catalog order.
+- **Classifier backoff** — after `classifier.backoffAfterFailures` consecutive failures, the
+  classifier is skipped for `classifier.backoffMs` and the heuristic is used instead.
+- **`local.providers`** config — provider ids treated as local for retry-to-cloud decisions;
+  defaults include `lmstudio`, `llama.cpp`, `ollama`, and `mtplx`.
+- **`/cuttle stats` registry cost fallback** — cloud spend is priced from pi's model registry
+  when `telemetry.pricing` is missing.
+
+### Fixed
+
+- **Local slot leak** — sticky continuations now acquire (or spill) a local slot, matching the
+  `message_end` release. Previously local inference ran unguarded after the first turn.
+- **Classifier `policy.threshold` ignored** — the classifier path hard-coded `0.5`; it now
+  honors the configured threshold.
+- **Sticky tier hard-fail** — a local/cloud continuation now falls back to the other tier when
+  its catalog becomes unresolvable mid-session instead of throwing.
+- **`--model=value` bypass** — auto-select no longer overrides an explicit model pinned with
+  the `=` form.
+- **Policy edit clobbering** — `/cuttle policy` edits now deep-merge nested `phase` and
+  `escalate` subkeys.
+
 ## [0.3.1] — 2026-10-18
 
 ### Added
@@ -178,7 +208,8 @@ OpenAI-compatible host behind the same abstraction.
 - The heuristic scored 70.5% on the routing corpus (33 cloud prompts misrouted to
   local); rewritten as signal-based scoring, measured at 100% on the corpus (#43).
 
-[Unreleased]: https://github.com/saman-mb/pi-cuttle/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/saman-mb/pi-cuttle/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.4.0
 [0.3.1]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.3.1
 [0.2.1]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.2.1
 [0.2.0]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.2.0
