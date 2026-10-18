@@ -57,6 +57,8 @@
   "scripts": {
     "test": "node --experimental-strip-types --test test/*.test.ts",
     "eval": "node --experimental-strip-types eval/run.ts",
+    "eval:routing": "node --experimental-strip-types --test eval/routing.test.ts",
+    "eval:report": "node --experimental-strip-types eval/report.ts",
     "typecheck": "tsc --noEmit",
     "badges": "bash scripts/render-badges.sh",
     "lint": "tsc --noEmit",
