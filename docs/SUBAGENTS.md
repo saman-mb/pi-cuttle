@@ -59,7 +59,8 @@ child processes (`PI_SUBAGENT_CHILD=1`) and in any session with a `parentSession
 not because `session_start` re-claimed them — so per-agent physical models keep working.
 
 A child that itself delegates registers under its own session id, so a nested subagent gets the
-router too; the parent's snapshot is untouched.
+router too; the parent's snapshot is untouched. A second session in the same process is the same:
+starting or shutting one down does not drop the other's registration.
 
 One deliberate limit: the registration does not set `requireForAllRunners`, so a child placed on a
 remote machine or a non-native runner still surfaces pi's opaque `Model "…" not found` rather than

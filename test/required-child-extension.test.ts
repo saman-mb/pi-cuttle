@@ -139,7 +139,7 @@ describe("registerRequiredChildExtension", () => {
 });
 
 describe("createRequiredChildExtensionController", () => {
-	it("replaces the previous registration when a new session starts", async () => {
+	it("keeps an earlier session when a second session registers", async () => {
 		const { module, calls, disposed } = fakeModule();
 		const controller = createRequiredChildExtensionController({ importer: async () => module });
 		await controller.register("session-1", "/opt/pi-cuttle/src/index.ts");
@@ -148,7 +148,11 @@ describe("createRequiredChildExtensionController", () => {
 			calls.map((call) => call.sessionId),
 			["session-1", "session-2"],
 		);
-		assert.deepEqual(disposed, [0], "the first registration is disposed, not leaked");
+		assert.deepEqual(disposed, [], "a sibling session must not drop the one that is still launching children");
+		controller.dispose("session-1");
+		assert.deepEqual(disposed, [0], "shutdown releases only the session that ended");
+		controller.dispose();
+		assert.deepEqual(disposed, [0, 1], "process exit releases whatever is still live");
 	});
 
 	it("disposes before re-registering the same session id (#131 resumed session)", async () => {

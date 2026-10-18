@@ -105,20 +105,20 @@ export async function registerRequiredChildExtension(
 	}
 }
 
-/**
- * The single live registration for a process. A new session replaces the previous one, so a
- * resumed or restarted session in the same process cannot leave a stale snapshot behind for a
- * session id pi-subagents no longer launches from.
- */
-export interface RequiredChildExtensionRegistration {
-	handle?: RequiredChildExtensionHandle;
-}
-
 export interface RequiredChildExtensionController {
-	/** Dispose any live registration, then register for `sessionId`. */
+	/**
+	 * Register for `sessionId`, replacing only that session's previous snapshot.
+	 *
+	 * A resumed session reuses its id, and pi-subagents rejects a second live registration for the
+	 * same id, so that id is disposed first. A different session in the same process is left alone:
+	 * dropping it would make the other session's children miss the router again (#131).
+	 */
 	register(sessionId: string, extensionPath: string): Promise<void>;
-	/** Dispose the live registration, if any. Safe to call repeatedly. */
-	dispose(): void;
+	/**
+	 * Dispose one session, or every session when `sessionId` is omitted.
+	 * Safe to call repeatedly, including for a session that was never registered.
+	 */
+	dispose(sessionId?: string): void;
 }
 
 export function createRequiredChildExtensionController(
@@ -127,14 +127,14 @@ export function createRequiredChildExtensionController(
 		log?: (message: string) => void;
 	} = {},
 ): RequiredChildExtensionController {
-	let current: RequiredChildExtensionRegistration | undefined;
+	const live = new Map<string, RequiredChildExtensionHandle>();
 
-	const dispose = (): void => {
-		const live = current;
-		current = undefined;
-		if (!live?.handle) return;
+	const disposeOne = (sessionId: string): void => {
+		const handle = live.get(sessionId);
+		live.delete(sessionId);
+		if (!handle) return;
 		try {
-			live.handle.dispose();
+			handle.dispose();
 		} catch (error) {
 			deps.log?.(`required-child-extension dispose failed: ${describe(error)}`);
 		}
@@ -142,17 +142,21 @@ export function createRequiredChildExtensionController(
 
 	return {
 		async register(sessionId: string, extensionPath: string): Promise<void> {
-			// pi-subagents rejects a second registration for a live session id, so the previous one
-			// must be released first — a resumed session reuses its id.
-			dispose();
+			disposeOne(sessionId);
 			const handle = await registerRequiredChildExtension({
 				sessionId,
 				extensionPath,
 				...(deps.importer ? { importer: deps.importer } : {}),
 				...(deps.log ? { log: deps.log } : {}),
 			});
-			current = handle ? { handle } : {};
+			if (handle) live.set(sessionId, handle);
 		},
-		dispose,
+		dispose(sessionId?: string): void {
+			if (sessionId) {
+				disposeOne(sessionId);
+				return;
+			}
+			for (const id of [...live.keys()]) disposeOne(id);
+		},
 	};
 }

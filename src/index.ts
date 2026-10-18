@@ -217,9 +217,11 @@ export default function modelRouter(pi: ExtensionAPI): void {
 		});
 	});
 
-	// Release the required-child-extension snapshot with the session it belongs to.
-	pi.on("session_shutdown", () => {
-		requiredChildExtension.dispose();
+	// Release only this session's snapshot. Another session in the same process still has children.
+	pi.on("session_shutdown", (_event, ctx) => {
+		const sessionId = safeSessionId(ctx);
+		if (sessionId) requiredChildExtension.dispose(sessionId);
+		else requiredChildExtension.dispose();
 	});
 
 	// Safety net for teardown; stale reaping covers crashes.

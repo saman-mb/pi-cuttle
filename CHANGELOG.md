@@ -17,6 +17,10 @@ versions follow [SemVer](https://semver.org/).
   child loads the router with no per-user config. The integration is optional: if `pi-subagents`
   is absent or its API drifts, the router logs to `PI_CUTTLE_DEBUG` and the session still starts.
   The manual `subagents.defaultSubagentOnlyExtensions` setup keeps working as a fallback.
+  A second session in the same process no longer drops the first session's registration, so one
+  session ending or starting cannot send the other's children back to `Model "…" not found`.
+  `npm run eval:child-launch` replays the Langfuse failures (`cuttle/local:high`,
+  `cuttle/local:medium`, `cuttle/auto:high`) through the installed launcher without starting a child.
 
 ## [0.6.0] — 2026-10-18
 
