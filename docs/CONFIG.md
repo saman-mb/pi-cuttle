@@ -26,8 +26,10 @@ In TUI mode the panel is interactive (Enter to select, Esc to cancel). In non-TU
 (print, JSON, RPC) it falls back to a text view showing all values and which file to edit.
 
 Changes are written immediately to `~/.pi/agent/pi-cuttle.json` and take effect from the next
-user turn. Sections locked by a project config file (`.pi/pi-cuttle.json`) are shown as
-SHADOWED and cannot be changed via the panel.
+**routing decision** — a new session, or the next user turn when `policy.reclassify` is `"turn"`.
+The default is `"session"`, so classifier and policy edits usually land in a new session; a turn
+that already decided keeps its model. Sections locked by a project config file
+(`.pi/pi-cuttle.json`) are shown as SHADOWED and cannot be changed via the panel.
 
 ## Model refs
 
@@ -45,11 +47,53 @@ The decision model. Must be a classifier pi can resolve via `ctx.modelRegistry`.
 | `model` | string | unset | `provider/model` of the classifier. Examples: `llama.cpp/ggml-org/Kev-9B-GGUF:Q8_0`, `opencode-go/some-classifier`. |
 | `fallback` | `"heuristic"` \| `"local"` \| `"cloud"` | `"heuristic"` | What to use when the classifier is unavailable or times out. |
 | `timeoutMs` | number | `4000` | Classifier timeout before falling back. |
-| `stateChars` | number | `16000` | Characters of the prompt handed to the classifier. |
+| `stateChars` | number | `16000` | Characters of the prompt handed to the classifier. Applies **only** when `contextSource` is `"last-message"` (the default); ignored otherwise. |
 | `backoffAfterFailures` | number | `3` | Consecutive failures before the classifier is skipped. |
 | `backoffMs` | number | `60000` | Cooldown after the failure threshold is crossed. |
+| `contextSource` | `"last-message"` \| `"conversation"` \| `"off"` | `"last-message"` | What the classifier is shown. `last-message` is today's behaviour: the newest user message, truncated by `stateChars`. `conversation` sends a structured view of the session instead. `off` skips the classifier entirely and uses the heuristic. **The default has not changed.** |
+| `contextBudget` | number | `8192` | Hard character cap for the `conversation` signal. Clamped to 64 000; values outside 1–64 000 are clamped rather than rejected. |
+| `conversationWindow` | number | `3` | How many recent assistant turns the `conversation` signal includes. |
+| `contextShadow` | boolean | `false` | When `true`, also classify with the *other* signal source and record both verdicts in the shadow log. Observability only — the alternate verdict never routes. Pair it with `policy`-level debugging before trusting the comparison. |
 
 Example: `{ "model": "llama.cpp/ggml-org/Kev-9B-GGUF:Q8_0", "fallback": "heuristic" }`.
+
+A second example enabling the conversation signal:
+
+```json
+{
+  "classifier": {
+    "model": "llama.cpp/ggml-org/Kev-9B-GGUF:Q8_0",
+    "contextSource": "conversation",
+    "contextBudget": 8192,
+    "conversationWindow": 3
+  }
+}
+```
+
+### Conversation context (`contextSource`)
+
+By default the classifier sees **only the newest user message**, truncated to `stateChars`
+characters. In a long session a terse follow-up ("do the other thing") is then classified on
+those few words alone.
+
+Setting `contextSource: "conversation"` sends a structured signal instead: the latest user
+message in full, the last `conversationWindow` assistant turns (role-tagged, each capped),
+a tool-usage digest, and session size — all inside `contextBudget`.
+
+The latest user message is never dropped in favour of history. If it alone exceeds the budget it
+is truncated to the budget; otherwise it is kept whole and older assistant turns are dropped
+first. Only text content is included — images and binary blocks are filtered out. The signal is
+deterministic, and a failure building it falls back to the `last-message` path with the reason
+logged, so the new path can never route worse than the default.
+
+**Rollout status.** `conversation` is **opt-in** and the default remains `last-message`. The
+default will only be changed after `contextShadow` comparison data from real sessions shows the
+conversation signal wins on terse follow-ups without regressing other cases. Until that evidence
+exists, no default has changed and this section is the accurate description of behaviour.
+
+**Timing.** This changes only what the classifier is shown, never when it runs. Routing still
+decides once per user turn; with the default `policy.reclassify: "session"` the decision is taken
+once and kept unless the session is recovering or de-escalating.
 
 `/cuttle doctor` checks that the classifier resolves and answers a trivial probe.
 Set `PI_CUTTLE_DEBUG` to a file path to log each routing decision and any classifier
