@@ -15,7 +15,7 @@ jobs:
   live-eval:
     # The runner is a Docker container on your Mac; it reaches the native
     # llama.app server via host.docker.internal.
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: [self-hosted, Linux, ARM64, eval]
     timeout-minutes: 20
     env:
       # Docker → host: use host.docker.internal to reach the native server
@@ -36,7 +36,11 @@ jobs:
             || { echo "::error::classifier unreachable at $PI_LIVE_EVAL_BASE_URL"; exit 1; }
 
       - name: Score the decision model against the corpus
-        run: npm run eval --live | tee live-eval.txt
+        run: |
+          # pipefail: without it, `| tee` masks a non-zero exit from the eval and the
+          # job reports green while the classifier score actually failed.
+          set -o pipefail
+          npm run eval:live | tee live-eval.txt
 
       - name: Upload report
         if: always()
