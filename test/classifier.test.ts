@@ -84,6 +84,24 @@ test("applyPolicy: phase ignores the score", () => {
 	assert.equal(applyPolicy(cfg, score, "implementation").tier, "local");
 });
 
+test("classifier honors policy.threshold", async () => {
+	const ctxLow = fakeCtx({
+		stopReason: "stop",
+		answers: { complexity: { type: "choice", choice: "standard", probabilities: { standard: 0.85, complex: 0.15 } } },
+	});
+	const cfgLow = { ...DEFAULTS, policy: { ...DEFAULTS.policy, threshold: 0.2 }, classifier: { ...DEFAULTS.classifier, model: "llama.cpp/kev" } };
+	const dLow = await decideTier({ config: cfgLow, prompt: "x", ctx: ctxLow });
+	assert.equal(dLow.tier, "local", "score 0.15 < threshold 0.2 routes local");
+
+	const ctxHigh = fakeCtx({
+		stopReason: "stop",
+		answers: { complexity: { type: "choice", choice: "complex", probabilities: { standard: 0.3, complex: 0.7 } } },
+	});
+	const cfgHigh = { ...DEFAULTS, policy: { ...DEFAULTS.policy, threshold: 0.8 }, classifier: { ...DEFAULTS.classifier, model: "llama.cpp/kev" } };
+	const dHigh = await decideTier({ config: cfgHigh, prompt: "x", ctx: ctxHigh });
+	assert.equal(dHigh.tier, "local", "score 0.7 < threshold 0.8 routes local");
+});
+
 test("classifier via modelRegistry: high complexity -> cloud", async () => {
 	const d = await decideTier({
 		config: { ...DEFAULTS, classifier: { ...DEFAULTS.classifier, model: "llama.cpp/kev" } },

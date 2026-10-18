@@ -271,7 +271,8 @@ export async function decideTier(input: {
 		const choice = answers.complexity;
 		if (choice?.type === "choice") {
 			const complex = choice.probabilities?.complex ?? (choice.choice === "complex" ? 1 : 0);
-			const tier: Tier = complex >= 0.5 ? "cloud" : "local";
+			const threshold = config.policy.threshold;
+			const tier: Tier = complex >= threshold ? "cloud" : "local";
 			const gates = parseGateVerdicts(answers, config.gates);
 			const gateSummary = gates ? ` gates=${formatGateSummary(gates)}` : "";
 			return {
