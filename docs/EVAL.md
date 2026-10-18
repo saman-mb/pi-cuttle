@@ -17,15 +17,21 @@ quality.
 and asserts the deterministic decision machinery. It is fast (~1.5 s for 56 fixtures),
 needs no server, and gates every PR. It does **not** invoke the decision model.
 
-**Layer 2** scores the real classifier against the labelled corpus. It needs a classifier
-present in pi's catalog and a reachable classifier host (LM Studio / llama.cpp / ollama with a
-decision model loaded), so it runs on a self-hosted runner and not on every PR. It constructs
-pi's `ModelRuntime` and `ModelRegistry` from the normal `~/.pi/agent/auth.json` and
-`models.json`, then calls `ModelRegistry.classify()` with the same question builder used by the
-router. pi's provider implementation owns protocol-specific prompts; this eval does not send
-its own HTTP request. It reports corpus accuracy and both asymmetric misroute counts for the
-classifier and the heuristic baseline. Model version/digest metadata is printed when pi's
-catalog provides it; the configured ref and resolved pi model id are always printed.
+**Layer 2** scores the real classifier against the labelled corpus. It needs a reachable
+classifier host (LM Studio / llama.cpp / ollama with a decision model loaded), so it runs on a
+self-hosted machine or scheduler, not on every PR. The classifier is resolved in two steps:
+
+1. **pi's own catalog** — `ModelRuntime` + `ModelRegistry` over `~/.pi/agent/{auth,models}.json`,
+   used when pi exposes the configured classifier, so provider/auth handling stays pi's.
+2. **Direct fallback** — some providers (notably `llama.cpp`) are registered by a runtime
+   extension a standalone script cannot load; `PI_LIVE_EVAL_BASE_URL` then supplies the host's
+   OpenAI-compatible base URL.
+
+Either way the classification runs through pi's own implementation
+(`@earendil-works/pi-ai/api/llama-cpp-classify`); the eval never sends its own HTTP prompt, so
+the score measures the model pi runs. It reports corpus accuracy and both asymmetric misroute
+counts for the classifier and the heuristic baseline. Model version/digest metadata is printed
+when pi's catalog provides it; the configured ref and resolved pi model id are always printed.
 
 Classification uses pi's deterministic label-probability path. The eval omits `temperature`:
 pi defines it as a positive softmax divisor over label log-probabilities (not sampling
@@ -188,8 +194,10 @@ npm run eval:promptfoo:view
 # Heuristic-only Layer 1 score (unchanged; no pi classifier or host required)
 npm run eval
 
-# Live Layer 2 classifier score (requires the configured classifier in pi's catalog + host)
+# Live Layer 2 classifier score (requires the configured classifier + a reachable host)
 npm run eval --live
+# Same, when the classifier is not in pi's catalog (e.g. a llama.cpp classifier):
+PI_LIVE_EVAL_BASE_URL=http://127.0.0.1:9931/v1 npm run eval --live
 # Equivalent explicit script
 npm run eval:live
 ```
@@ -210,31 +218,57 @@ Layer 1 runs on every push to `main` and on every PR via `.github/workflows/eval
 ```
 
 Layer 2 (`npm run eval --live`) is not part of the per-PR gate. Run it on a machine with
-pi-cuttle's `classifier.model` configured, the classifier available in pi's catalog, and its
-host reachable. Missing configuration, catalog entries, or failed classifier requests exit
-non-zero with a diagnostic.
+pi-cuttle's `classifier.model` configured and the classifier host reachable. Missing
+configuration, an unresolvable classifier, or a failed request exits non-zero with a diagnostic.
 
 ## Layer 2: Live Classifier Eval
 
 Run `npm run eval --live` (or `npm run eval:live`) to score `eval/corpus.jsonl` through pi's
-own classifier implementation. The command uses pi's `ModelRuntime.create({ authPath, modelsPath })` and `ModelRegistry`; it
-does not replace pi's protocol prompts with an eval-side HTTP prompt. It uses the classifier ref from `pi-cuttle.json` and the pi catalog under
-`~/.pi/agent/models.json`, with auth from `~/.pi/agent/auth.json`. Project-level pi-cuttle config
-still takes precedence for the configured ref.
+own classifier implementation.
 
-The report includes the classifier ref, resolved pi model ID/API, any version/digest pi
-exposes, the classifier accuracy/confusion counts, and the heuristic baseline under the same
-policy threshold. `local -> cloud` is wasted spend; `cloud -> local` is quality risk. A model
-version or weight digest absent from pi's classifier catalog is explicitly reported as
-unavailable rather than guessed from an HTTP response. No classifier, an unknown pi catalog
-entry, a timeout, or a failed host request exits non-zero; it never silently falls back to the
-heuristic for the classifier score.
+### Resolution order
 
-The classifier path is deterministic over label probabilities. The command deliberately
+1. **pi's catalog.** The command builds pi's `ModelRuntime.create({ authPath, modelsPath })` and
+   `ModelRegistry` from `~/.pi/agent/{auth,models}.json` and uses the classifier when pi's
+   catalog exposes it. The classifier ref comes from `pi-cuttle.json` (project config wins).
+2. **Direct fallback.** Some providers — `llama.cpp` among them — are registered by a runtime
+   extension, so a standalone script cannot see them even though pi resolves them fine at
+   runtime. When the catalog returns nothing, supply the host's OpenAI-compatible base URL:
+
+   ```bash
+   PI_LIVE_EVAL_BASE_URL=http://127.0.0.1:9931/v1 npm run eval --live
+   ```
+
+Both paths call pi's classifier implementation (`@earendil-works/pi-ai/api/llama-cpp-classify`).
+The eval never sends its own HTTP prompt, so the score measures the model pi runs — and the
+report prints which path resolved the classifier.
+
+### Output
+
+The classifier ref, resolved model id/API, any version/digest pi exposes, the classifier
+accuracy and confusion counts, and the heuristic baseline under the same policy threshold.
+`local -> cloud` is wasted spend; `cloud -> local` is quality risk. A version or weight digest
+absent from pi's classifier catalog is reported as unavailable rather than guessed from an HTTP
+response.
+
+### Failure behaviour
+
+No classifier configured, neither path resolvable, a timeout, or a failed host request exits
+non-zero with a diagnostic. It never silently falls back to the heuristic and reports that as
+the classifier score.
+
+### Determinism
+
+The classifier path is a deterministic forward pass over label probabilities. The command
 omits `temperature`: pi interprets it as the softmax divisor (which must be positive), not a
-generation sampling temperature, and passing zero is invalid. Do not gate CI on individual
-fixture tiers; compare corpus-level accuracy and confusion counts on the pinned model. See #97
-for the implementation and original Layer 2 requirements.
+generation sampling temperature, and passing zero is invalid. Pin the model and compare
+corpus-level accuracy and confusion counts; do not gate CI on individual fixture tiers.
+
+### Measured baseline (2026-10-18)
+
+`llama.cpp/ggml-org/Kev-9B-GGUF:Q8_0` on llama-server scored **93.8%** over the 112-prompt
+corpus (1 `local→cloud`, 6 `cloud→local`), against the tuned heuristic's **100%**. The six
+`cloud→local` misses are the quality-risk direction. See `eval/BASELINE.md` and #97.
 
 ## Interpreting Results
 
