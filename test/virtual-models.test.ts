@@ -77,6 +77,18 @@ test("pickCloud capacity filter still takes precedence over cost", () => {
 	assert.equal(pickCloud(cfg, ctx, 0.5), "cloud/big", "small model does not fit despite being cheaper");
 });
 
+test("capabilities override context window for model selection", () => {
+	const cfg = config({
+		catalog: { local: ["llama.cpp/small-window", "llama.cpp/big-window"], cloud: [] },
+		capabilities: { "llama.cpp/small-window": 0.9, "llama.cpp/big-window": 0.3 },
+	});
+	const ctx = fakeCtx({ "llama.cpp/small-window": 32_000, "llama.cpp/big-window": 128_000 });
+	assert.equal(pickLocal(cfg, ctx, "auto", 0.5), "llama.cpp/small-window", "capability map overrides window ratio");
+
+	const noCaps = config({ catalog: { local: ["llama.cpp/small-window", "llama.cpp/big-window"], cloud: [] } });
+	assert.equal(pickLocal(noCaps, ctx, "auto", 0.5), "llama.cpp/big-window", "without capabilities window ratio decides");
+});
+
 test("complexity score selects the smallest model that can handle it", () => {
 	const cfg = config({ catalog: { local: ["llama.cpp/small", "llama.cpp/medium", "llama.cpp/large"], cloud: [] } });
 	const ctx = fakeCtx({ "llama.cpp/small": 32_000, "llama.cpp/medium": 64_000, "llama.cpp/large": 128_000 });
