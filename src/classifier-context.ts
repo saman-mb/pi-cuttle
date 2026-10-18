@@ -7,7 +7,13 @@ export interface ClassifierContextOptions {
 }
 
 const DEFAULT_ASSISTANT_CAP = 1500;
-const NEW_SESSION = "[new session]";
+/**
+ * Returned when there is no usable conversation to describe.
+ *
+ * Exported so callers can tell "no context" from "context that happens to read like this": a caller
+ * that needs a real signal must treat this sentinel as absence rather than classifying it.
+ */
+export const NEW_SESSION = "[new session]";
 const MUTATING_TOOLS = ["edit", "write", "bash"] as const;
 type MutatingTool = typeof MUTATING_TOOLS[number];
 

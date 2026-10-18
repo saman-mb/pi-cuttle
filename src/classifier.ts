@@ -10,7 +10,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ClassifierQuestion, Message } from "@earendil-works/pi-ai";
 
-import { buildClassifierContext } from "./classifier-context.ts";
+import { buildClassifierContext, NEW_SESSION } from "./classifier-context.ts";
 import { isSubagent } from "./subagent.ts";
 import type {
 	ChoiceGateConfig,
@@ -316,11 +316,23 @@ export async function decideTier(input: {
 	let contextFailure: string | undefined;
 	if (config.classifier.contextSource === "conversation") {
 		try {
+			// Never show the classifier *less* than the default path would. When the latest message alone
+			// is larger than the conversation budget, the formatter can only truncate it to that budget —
+			// smaller than `stateChars` — so prefer the last-message path instead. (#103 integration board)
+			if (prompt.length > config.classifier.contextBudget) {
+				throw new Error(
+					`latest message ${prompt.length} chars exceeds contextBudget ${config.classifier.contextBudget}`,
+				);
+			}
 			const formatted = (input.contextBuilder ?? buildClassifierContext)(messages ?? [], {
 				budget: config.classifier.contextBudget,
 				window: config.classifier.conversationWindow,
 			});
 			if (typeof formatted !== "string" || formatted.length === 0) throw new Error("formatter returned empty context");
+			// The formatter is contractually non-throwing: it returns the NEW_SESSION sentinel when it
+			// cannot describe the conversation (empty session, malformed data, internal error).
+			// Classifying that sentinel would be worse than today's behaviour, so treat it as a failure.
+			if (formatted.trim() === NEW_SESSION) throw new Error("formatter produced no usable context");
 			classifierPrompt = formatted;
 			signalPath = "conversation";
 		} catch (error) {
