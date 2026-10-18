@@ -261,11 +261,16 @@ async function classifyAlternateSignal(input: {
 	try {
 		let prompt = input.prompt.slice(0, input.config.classifier.stateChars);
 		if (input.signalPath === "conversation") {
+			// Same context-validation policy as the authoritative path. If they diverged, the shadow
+			// data would compare one real signal against a garbage one — and that data is what gates
+			// the default flip, so a misleading comparison is worse than no comparison.
+			// (#103 integration board, architect)
+			if (input.prompt.length > input.config.classifier.contextBudget) return undefined;
 			prompt = input.contextBuilder(input.messages ?? [], {
 				budget: input.config.classifier.contextBudget,
 				window: input.config.classifier.conversationWindow,
 			});
-			if (!prompt) return undefined;
+			if (!prompt || prompt.trim() === NEW_SESSION) return undefined;
 		}
 		const model = input.ctx.modelRegistry.findOfType("classifier", input.parsed.provider, input.parsed.id);
 		if (!model) return undefined;

@@ -520,3 +520,39 @@ test("conversation context never shows the classifier less than the default path
 	assert.equal(receivedPrompt, prompt.slice(0, 400), "must fall back to the larger stateChars window");
 	assert.match(decision.reason, /exceeds contextBudget/);
 });
+
+// Region: shadow parity (#103 integration board, architect seat).
+//
+// The shadow comparison is the evidence used to gate the default flip. If it applied a laxer
+// validation policy than the authoritative path, one real signal would be compared against a garbage
+// one and the resulting ledger would argue for a flip on false grounds.
+
+test("the shadow comparison applies the same fallbacks as the primary path", async () => {
+	const config = {
+		...DEFAULTS,
+		classifier: {
+			...DEFAULTS.classifier,
+			model: "llama.cpp/kev",
+			contextSource: "last-message" as const, // so the alternate path is "conversation"
+			contextShadow: true,
+			contextBudget: 100,
+			stateChars: 400,
+		},
+	};
+
+	// Latest message larger than contextBudget: the alternate conversation signal is unavailable,
+	// so there must be no paired verdict rather than a truncated-vs-real comparison.
+	const oversized = await decideTier({ config, prompt: "x".repeat(500), ctx: fakeCtx(), contextBuilder: () => "conversation signal" });
+	assert.equal(await oversized.shadowComparison, undefined, "oversized message must not yield a paired comparison");
+
+	// Formatter degrading to the sentinel: likewise unavailable.
+	const sentinel = await decideTier({ config, prompt: "short prompt", ctx: fakeCtx(), contextBuilder: () => NEW_SESSION });
+	assert.equal(await sentinel.shadowComparison, undefined, "a sentinel must not be compared");
+
+	// A usable signal still produces a comparison, so the guard has not disabled shadow entirely.
+	const good = await decideTier({ config, prompt: "short prompt", ctx: fakeCtx(), contextBuilder: () => "conversation signal" });
+	const paired = await good.shadowComparison;
+	assert.ok(paired, "a valid alternate signal must still be compared");
+	assert.equal(paired.authoritative.signalPath, "last-message");
+	assert.equal(paired.alternate.signalPath, "conversation");
+});
