@@ -137,7 +137,10 @@ export class LangFuseClient {
 	}
 
 	async score(entry: { traceId: string; name: string; value: boolean | number | string; dataType: string }): Promise<void> {
+		// Verified against Langfuse 3.225: a score without an id is accepted (200) and then silently
+		// dropped, so the id is not optional in practice.
 		await this.post("/api/public/scores", {
+			id: `${entry.traceId}-${entry.name}`,
 			traceId: entry.traceId,
 			name: entry.name,
 			value: entry.value,

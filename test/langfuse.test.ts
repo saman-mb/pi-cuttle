@@ -165,6 +165,7 @@ describe("LangFuseClient", () => {
 			assert.equal(req.method, "POST");
 			assert.equal(req.url, "/api/public/scores");
 			assert.equal(req.body.traceId, "trace-1");
+			assert.equal(req.body.id, "trace-1-flavor_compliance", "a score without an id is silently dropped");
 			assert.equal(req.body.name, "flavor_compliance");
 			assert.equal(req.body.value, false);
 			assert.equal(req.body.dataType, "BOOLEAN");
