@@ -111,7 +111,6 @@ export async function registerRequiredChildExtension(
  * session id pi-subagents no longer launches from.
  */
 export interface RequiredChildExtensionRegistration {
-	sessionId: string;
 	handle?: RequiredChildExtensionHandle;
 }
 
@@ -143,6 +142,8 @@ export function createRequiredChildExtensionController(
 
 	return {
 		async register(sessionId: string, extensionPath: string): Promise<void> {
+			// pi-subagents rejects a second registration for a live session id, so the previous one
+			// must be released first — a resumed session reuses its id.
 			dispose();
 			const handle = await registerRequiredChildExtension({
 				sessionId,
@@ -150,7 +151,7 @@ export function createRequiredChildExtensionController(
 				...(deps.importer ? { importer: deps.importer } : {}),
 				...(deps.log ? { log: deps.log } : {}),
 			});
-			current = { sessionId, ...(handle ? { handle } : {}) };
+			current = handle ? { handle } : {};
 		},
 		dispose,
 	};

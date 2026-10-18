@@ -21,20 +21,32 @@ interface Recorded {
 	extensions: readonly RequiredChildExtensionEntry[];
 }
 
-/** A fake pi-subagents registry that records calls and tracks dispose. */
+/**
+ * A fake pi-subagents registry that records calls, tracks dispose, and — like the real one —
+ * rejects a second registration for a live session id. Modelling that rejection is what pins
+ * dispose-before-register ordering: a regression to register-then-dispose fails here instead of
+ * quietly falling through to the soft path.
+ */
 function fakeModule(): { module: RequiredChildExtensionsModule; calls: Recorded[]; disposed: number[] } {
 	const calls: Recorded[] = [];
 	const disposed: number[] = [];
+	const live = new Set<string>();
 	let next = 0;
 	return {
 		calls,
 		disposed,
 		module: {
 			registerRequiredChildExtensions(input) {
+				if (live.has(input.sessionId)) {
+					throw new Error(`Required child extensions are already registered for session '${input.sessionId}'; dispose them first.`);
+				}
+				live.add(input.sessionId);
 				calls.push({ sessionId: input.sessionId, extensions: input.extensions });
 				const index = next++;
+				const sessionId = input.sessionId;
 				return {
 					dispose() {
+						live.delete(sessionId);
 						disposed.push(index);
 					},
 				};
@@ -137,6 +149,26 @@ describe("createRequiredChildExtensionController", () => {
 			["session-1", "session-2"],
 		);
 		assert.deepEqual(disposed, [0], "the first registration is disposed, not leaked");
+	});
+
+	it("disposes before re-registering the same session id (#131 resumed session)", async () => {
+		// The fake rejects a duplicate live session id, as pi-subagents does. Register-then-dispose
+		// would throw and soft-fail, so this pins the ordering rather than the happy path.
+		const { module, calls, disposed } = fakeModule();
+		const logged: string[] = [];
+		const controller = createRequiredChildExtensionController({
+			importer: async () => module,
+			log: (message) => logged.push(message),
+		});
+		await controller.register("session-1", "/opt/pi-cuttle/src/index.ts");
+		await controller.register("session-1", "/opt/pi-cuttle/src/index.ts");
+		assert.deepEqual(
+			calls.map((call) => call.sessionId),
+			["session-1", "session-1"],
+			"the same session re-registers successfully",
+		);
+		assert.deepEqual(disposed, [0]);
+		assert.equal(logged.filter((line) => /registration failed/.test(line)).length, 0);
 	});
 
 	it("disposes the live registration on request, and is idempotent", async () => {

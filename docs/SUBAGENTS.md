@@ -3,8 +3,9 @@
 ## The problem
 
 `pi-subagents` runs children as pi sessions. A child routes through `cuttle/*` only if the
-router's virtual models are registered in the child's session. There are three loading paths,
-and only one is reliable (verified on pi 1.2.0 + the installed `pi-subagents`):
+router's virtual models are registered in the child's session. There are three loading paths
+(verified on pi 1.2.0 + the installed `pi-subagents`; the foreground-without-config row was
+re-verified end-to-end on pi-subagents 0.79.1 after #131):
 
 | Child type | Ambient extensions loaded? | Virtual models resolve? |
 |---|---|---|
@@ -59,6 +60,12 @@ not because `session_start` re-claimed them — so per-agent physical models kee
 
 A child that itself delegates registers under its own session id, so a nested subagent gets the
 router too; the parent's snapshot is untouched.
+
+One deliberate limit: the registration does not set `requireForAllRunners`, so a child placed on a
+remote machine or a non-native runner still surfaces pi's opaque `Model "…" not found` rather than
+pi-subagents' clearer "host requires child extensions" diagnostic. Forcing that flag would make such
+agents fail to launch at all, which is worse than a confusing message — so the router asks only for
+what every local child can honour.
 
 ## Per-role policies
 
