@@ -54,7 +54,7 @@ export function configPaths(cwd: string): string[] {
 	return [join(homedir(), ".pi", "agent", "pi-cuttle.json"), join(cwd, ".pi", "pi-cuttle.json")];
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -65,7 +65,7 @@ function mergeSection<T extends object>(base: T, patch: unknown): T {
 }
 
 /** Merge the `policy` section, keeping nested `phase` and `escalate` defaults. */
-function mergePolicy(base: RouterConfig["policy"], patch: unknown): RouterConfig["policy"] {
+export function mergePolicy(base: RouterConfig["policy"], patch: unknown): RouterConfig["policy"] {
 	if (!isRecord(patch)) return base;
 	return {
 		...base,

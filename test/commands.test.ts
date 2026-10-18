@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { buildInitPatch, buildStatusLines, checkCatalog } from "../src/commands.ts";
+import { applyRuntimePatch, buildInitPatch, buildStatusLines, checkCatalog } from "../src/commands.ts";
 import { DEFAULTS } from "../src/config.ts";
 import type { RouterRuntime } from "../src/virtual-models.ts";
 
@@ -56,6 +56,20 @@ test("buildInitPatch writes a full first-run config", () => {
 	assert.equal((patch.classifier as Record<string, unknown>).model, "llama.cpp/kev");
 	assert.deepEqual((patch.catalog as Record<string, unknown>).local, ["mtplx/flash"]);
 	assert.deepEqual((patch.catalog as Record<string, unknown>).cloud, ["opencode-go/deepseek"]);
+});
+
+test("applyRuntimePatch deep-merges policy so phase subkeys survive", () => {
+	const rt = rtWith(false);
+	applyRuntimePatch(rt, { policy: { phase: { plan: "local" as const } } });
+	assert.equal(rt.config.policy.phase.plan, "local");
+	assert.equal(rt.config.policy.phase.implement, DEFAULTS.policy.phase.implement, "implement subkey is preserved");
+});
+
+test("applyRuntimePatch deep-merges policy escalate subkeys", () => {
+	const rt = rtWith(false);
+	applyRuntimePatch(rt, { policy: { escalate: { toolErrors: 5 } } });
+	assert.equal(rt.config.policy.escalate.toolErrors, 5);
+	assert.equal(rt.config.policy.escalate.window, DEFAULTS.policy.escalate.window, "window subkey is preserved");
 });
 
 test("buildInitPatch omits classifier when none chosen", () => {

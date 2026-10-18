@@ -6,7 +6,7 @@
  */
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
-import { saveUserConfig, type LoadedConfig } from "./config.ts";
+import { isRecord, mergePolicy, saveUserConfig, type LoadedConfig } from "./config.ts";
 import { splitRef } from "./classifier.ts";
 import { formatStats, type Telemetry } from "./telemetry.ts";
 import { computeAgreement, formatAgreement, readShadow } from "./shadow.ts";
@@ -14,15 +14,18 @@ import type { RouterRuntime } from "./virtual-models.ts";
 import type { GovernorStatus, PolicyMode, RouterConfig, Tier } from "./types.ts";
 import { VIRTUAL_PROVIDER } from "./types.ts";
 
+export function applyRuntimePatch(rt: RouterRuntime, patch: Record<string, unknown>): void {
+	if (typeof patch.autoSelect === "boolean") rt.config.autoSelect = patch.autoSelect;
+	if (isRecord(patch.classifier)) Object.assign(rt.config.classifier, patch.classifier);
+	if (isRecord(patch.catalog)) Object.assign(rt.config.catalog, patch.catalog);
+	if (patch.policy) rt.config.policy = mergePolicy(rt.config.policy, patch.policy);
+	if (isRecord(patch.local)) Object.assign(rt.config.local, patch.local);
+}
+
 function refresh(rt: RouterRuntime, patch: Record<string, unknown>): string {
 	const path = saveUserConfig(patch);
 	// Apply in-memory so the change takes effect without a restart.
-	const next = patch as Record<string, Record<string, unknown>>;
-	if (typeof patch.autoSelect === "boolean") rt.config.autoSelect = patch.autoSelect;
-	if (next.classifier) Object.assign(rt.config.classifier, next.classifier);
-	if (next.catalog) Object.assign(rt.config.catalog, next.catalog);
-	if (next.policy) Object.assign(rt.config.policy, next.policy);
-	if (next.local) Object.assign(rt.config.local, next.local);
+	applyRuntimePatch(rt, patch);
 	return path;
 }
 
