@@ -3,8 +3,11 @@ import { test } from "node:test";
 
 import { applyOverrides, DEFAULTS, expandHome } from "../src/config.ts";
 
-test("classifier context defaults preserve last-message behavior", () => {
+test("classifier context defaults preserve last-message behavior and disable shadow comparisons", () => {
 	assert.equal(DEFAULTS.classifier.contextSource, "last-message");
+	assert.equal(DEFAULTS.classifier.contextShadow, false);
+	assert.equal(applyOverrides(DEFAULTS, { classifier: { contextShadow: true } }).classifier.contextShadow, true);
+	assert.equal(applyOverrides(DEFAULTS, { classifier: { contextShadow: "yes" } }).classifier.contextShadow, false);
 	assert.equal(DEFAULTS.classifier.contextBudget, 8192);
 	assert.equal(DEFAULTS.classifier.conversationWindow, 3);
 	const existingConfig = applyOverrides(DEFAULTS, { classifier: { model: "llama.cpp/kev", stateChars: 1234 } });
