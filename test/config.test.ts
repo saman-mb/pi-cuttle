@@ -3,6 +3,30 @@ import { test } from "node:test";
 
 import { applyOverrides, DEFAULTS, expandHome } from "../src/config.ts";
 
+test("classifier context defaults preserve last-message behavior", () => {
+	assert.equal(DEFAULTS.classifier.contextSource, "last-message");
+	assert.equal(DEFAULTS.classifier.contextBudget, 8192);
+	assert.equal(DEFAULTS.classifier.conversationWindow, 3);
+	const existingConfig = applyOverrides(DEFAULTS, { classifier: { model: "llama.cpp/kev", stateChars: 1234 } });
+	assert.equal(existingConfig.classifier.contextSource, "last-message");
+	assert.equal(existingConfig.classifier.stateChars, 1234);
+});
+
+test("unknown classifier context sources fall back to last-message", () => {
+	const merged = applyOverrides(DEFAULTS, { classifier: { contextSource: "future-mode" } });
+	assert.equal(merged.classifier.contextSource, "last-message");
+});
+
+test("classifier conversation budget is clamped and invalid values are ignored", () => {
+	const capped = applyOverrides(DEFAULTS, { classifier: { contextBudget: 100_000 } });
+	assert.equal(capped.classifier.contextBudget, 64_000);
+	const floored = applyOverrides(DEFAULTS, { classifier: { contextBudget: -10 } });
+	assert.equal(floored.classifier.contextBudget, 1);
+	const invalid = applyOverrides(DEFAULTS, { classifier: { contextBudget: "large" } });
+	assert.equal(invalid.classifier.contextBudget, 8192);
+	assert.equal(DEFAULTS.classifier.conversationWindow, 3);
+});
+
 test("defaults route by complexity once per session", () => {
 	assert.equal(DEFAULTS.policy.mode, "complexity");
 	assert.equal(DEFAULTS.policy.reclassify, "session");

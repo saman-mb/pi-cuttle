@@ -26,7 +26,13 @@ export interface ClassifierConfig {
 	/** What to do when the classifier is unavailable or times out. */
 	fallback: "heuristic" | Tier;
 	timeoutMs: number;
-	/** Characters of the prompt handed to the classifier. */
+	/** Source of the classifier prompt; defaults to the most recent user message. */
+	contextSource: "last-message" | "conversation" | "off";
+	/** Character budget for formatted conversation context. */
+	contextBudget: number;
+	/** Number of recent assistant turns included in conversation context. */
+	conversationWindow: number;
+	/** Characters of the prompt handed to the classifier in last-message mode. */
 	stateChars: number;
 	/** Consecutive failures before the classifier is skipped for backoffMs. */
 	backoffAfterFailures: number;
