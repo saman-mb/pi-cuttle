@@ -7,6 +7,13 @@ versions follow [SemVer](https://semver.org/).
 
 ### Added
 
+- **Live Layer 2 classifier eval** — `npm run eval --live` builds pi's model runtime and scores
+  the configured classifier through `ModelRegistry.classify()` over `eval/corpus.jsonl`, beside
+  the unchanged heuristic score. It reports asymmetric confusion counts and available model
+  attribution metadata; missing classifier configuration/catalog entries or failed requests
+  exit non-zero. No live score was recorded on this host because its configured classifier was
+  absent from pi's catalog (#97).
+
 - **`/cuttle config` panel** — a single searchable SettingsList showing all routing knobs at once:
   classifier model (with submenu), policy mode (cycle), `local.maxConcurrent` (submenu), and
   read-only catalog rows that point to `/cuttle models`. Enter cycles values or opens submenus;

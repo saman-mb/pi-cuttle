@@ -11,16 +11,26 @@ quality.
 | Layer | What it exercises | Model needed? | Runner | Status |
 |---|---|---|---|---|
 | **Layer 1 — routing policy** | policy, thresholds, thinking-level clamping, subagent override, flavor selection, gates, `/cuttle why` | **no** | GitHub-hosted | ✅ running |
-| **Layer 2 — decision model** | the configured classifier's real accuracy over `eval/corpus.jsonl` | **yes** | self-hosted | 🚧 tracked in #97 |
+| **Layer 2 — decision model** | the configured classifier's real accuracy over `eval/corpus.jsonl` | **yes** | self-hosted / manual | ✅ `npm run eval --live` |
 
 **Layer 1** drives the router through a **mocked model registry** (`eval/pi-cuttle-provider.ts`)
 and asserts the deterministic decision machinery. It is fast (~1.5 s for 56 fixtures),
 needs no server, and gates every PR. It does **not** invoke the decision model.
 
-**Layer 2** scores the real classifier against the labelled corpus. It needs a reachable
-classifier host (LM Studio / llama.cpp / ollama with a decision model loaded), so it runs
-on a self-hosted runner and not on every PR. Its determinism requirements (temperature 0,
-pinned model digest, corpus-level accuracy gate) are specified in #97.
+**Layer 2** scores the real classifier against the labelled corpus. It needs a classifier
+present in pi's catalog and a reachable classifier host (LM Studio / llama.cpp / ollama with a
+decision model loaded), so it runs on a self-hosted runner and not on every PR. It constructs
+pi's `ModelRuntime` and `ModelRegistry` from the normal `~/.pi/agent/auth.json` and
+`models.json`, then calls `ModelRegistry.classify()` with the same question builder used by the
+router. pi's provider implementation owns protocol-specific prompts; this eval does not send
+its own HTTP request. It reports corpus accuracy and both asymmetric misroute counts for the
+classifier and the heuristic baseline. Model version/digest metadata is printed when pi's
+catalog provides it; the configured ref and resolved pi model id are always printed.
+
+Classification uses pi's deterministic label-probability path. The eval omits `temperature`:
+pi defines it as a positive softmax divisor over label log-probabilities (not sampling
+randomness), and zero is rejected. There is no per-prompt exact-tier CI gate; use the corpus
+summary for comparisons. Layer 2 is manual/scheduled on a self-hosted machine, not a per-PR gate.
 
 > **Honest caveat.** `eval/corpus.jsonl` scores the signal-based heuristic at 100%, but
 > `eval/BASELINE.md` records that the heuristic was **tuned against that corpus**. A tuned-to
@@ -175,8 +185,13 @@ npm run eval:promptfoo
 # View the HTML report
 npm run eval:promptfoo:view
 
-# Legacy heuristic eval (still supported)
+# Heuristic-only Layer 1 score (unchanged; no pi classifier or host required)
 npm run eval
+
+# Live Layer 2 classifier score (requires the configured classifier in pi's catalog + host)
+npm run eval --live
+# Equivalent explicit script
+npm run eval:live
 ```
 
 ### CI
@@ -194,7 +209,32 @@ Layer 1 runs on every push to `main` and on every PR via `.github/workflows/eval
     path: eval/results.json
 ```
 
-Layer 2 (`--live`) is not part of the per-PR gate — see #97 and #84.
+Layer 2 (`npm run eval --live`) is not part of the per-PR gate. Run it on a machine with
+pi-cuttle's `classifier.model` configured, the classifier available in pi's catalog, and its
+host reachable. Missing configuration, catalog entries, or failed classifier requests exit
+non-zero with a diagnostic.
+
+## Layer 2: Live Classifier Eval
+
+Run `npm run eval --live` (or `npm run eval:live`) to score `eval/corpus.jsonl` through pi's
+own classifier implementation. The command uses pi's `ModelRuntime.create({ authPath, modelsPath })` and `ModelRegistry`; it
+does not replace pi's protocol prompts with an eval-side HTTP prompt. It uses the classifier ref from `pi-cuttle.json` and the pi catalog under
+`~/.pi/agent/models.json`, with auth from `~/.pi/agent/auth.json`. Project-level pi-cuttle config
+still takes precedence for the configured ref.
+
+The report includes the classifier ref, resolved pi model ID/API, any version/digest pi
+exposes, the classifier accuracy/confusion counts, and the heuristic baseline under the same
+policy threshold. `local -> cloud` is wasted spend; `cloud -> local` is quality risk. A model
+version or weight digest absent from pi's classifier catalog is explicitly reported as
+unavailable rather than guessed from an HTTP response. No classifier, an unknown pi catalog
+entry, a timeout, or a failed host request exits non-zero; it never silently falls back to the
+heuristic for the classifier score.
+
+The classifier path is deterministic over label probabilities. The command deliberately
+omits `temperature`: pi interprets it as the softmax divisor (which must be positive), not a
+generation sampling temperature, and passing zero is invalid. Do not gate CI on individual
+fixture tiers; compare corpus-level accuracy and confusion counts on the pinned model. See #97
+for the implementation and original Layer 2 requirements.
 
 ## Interpreting Results
 
