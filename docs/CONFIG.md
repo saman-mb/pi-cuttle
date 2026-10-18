@@ -29,6 +29,8 @@ The decision model. Must be a classifier pi can resolve via `ctx.modelRegistry`.
 | `fallback` | `"heuristic"` \| `"local"` \| `"cloud"` | `"heuristic"` | What to use when the classifier is unavailable or times out. |
 | `timeoutMs` | number | `4000` | Classifier timeout before falling back. |
 | `stateChars` | number | `16000` | Characters of the prompt handed to the classifier. |
+| `backoffAfterFailures` | number | `3` | Consecutive failures before the classifier is skipped. |
+| `backoffMs` | number | `60000` | Cooldown after the failure threshold is crossed. |
 
 Example: `{ "model": "llama.cpp/ggml-org/Kev-9B-GGUF:Q8_0", "fallback": "heuristic" }`.
 
@@ -39,13 +41,13 @@ classifier fell back to the heuristic.
 
 ## `catalog`
 
-Ordered candidate lists, tried in order. The first entry is preferred; if it is
-missing from the model registry, over its context window, or out of slots, the next
-resolvable candidate is used before spilling to cloud. When the cloud catalog
-resolves nothing, the turn falls back to a local candidate rather than failing; only
-when nothing at all resolves does routing raise a clear error. `cuttle/fast-local`
-orders local candidates by a configured size map if one is supplied; otherwise it keeps
-catalog order.
+Ordered candidate lists. Catalog order is the final tiebreaker; the router normally
+reorders candidates by ability to handle the turn and, for cloud, by cost.
+
+- If a candidate is missing from the model registry, over its context window, or out
+  of slots, the next resolvable candidate is used before spilling to cloud.
+- When the cloud catalog resolves nothing, the turn falls back to a local candidate
+  rather than failing; only when nothing at all resolves does routing raise a clear error.
 
 | Field | Type | Default |
 |---|---|---|
@@ -55,10 +57,40 @@ catalog order.
 ### Model selection by complexity
 
 When the classifier returns a complexity score, the router uses each candidate's
-context window (read from pi's model registry) as a capacity proxy. Within the chosen
+context window (read from pi's model registry) as a capacity proxy. Within the local
 tier it picks the smallest model whose capacity is at least the complexity score. If no
 candidate reaches the score, it picks the largest. This keeps cheap/small models on easy
 work without hard-coding capacities.
+
+Within the cloud tier, among models that fit the score, the router picks the cheapest
+(using pi's registry cost). Catalog order only breaks ties.
+
+### `cuttle/fast-local`
+
+`cuttle/fast-local` orders local candidates by the optional `capabilities` map below,
+lowest capability first. Without `capabilities`, it keeps catalog order.
+
+## `capabilities`
+
+Optional per-model capability overrides as a flat map of `provider/model -> [0,1]`.
+Higher means the model can handle harder work. When set for a model, this value is used
+instead of the context-window ratio for "smallest adequate model" selection and for
+`cuttle/fast-local` ordering.
+
+Use this when context window is a poor proxy for ability — for example, a 32k-context
+30B model is usually more capable than a 128k-context 4B model, or when you want
+`fast-local` to prefer a specific small model regardless of window size.
+
+```json
+{
+  "capabilities": {
+    "mtplx/mtplx-flash-next-optimized-speed": 0.3,
+    "mtplx/mtplx-qwen38-27b-optimized-quality": 0.8,
+    "opencode-go/deepseek-v4.1-flash": 0.6,
+    "opencode-go/qwen3.7-plus": 0.85
+  }
+}
+```
 
 ## `policy`
 
@@ -95,6 +127,7 @@ is filesystem-based.
 | `waitMs` | number | `20000` | Wait budget before spilling when `onFull: "wait"`. |
 | `slotDir` | string | `~/.pi/agent/pi-cuttle/slots` | Where slot files live. `~` expands. |
 | `staleSlotMs` | number | `300000` | A slot older than this is reaped. |
+| `providers` | string[] | `["lmstudio", "llama.cpp", "ollama", "mtplx"]` | Provider ids treated as local for retry-to-cloud decisions. |
 
 This cap counts **in-flight turns**, not loaded models. pi-cuttle no longer talks to local
 servers directly, so it cannot manage how many models your server keeps resident in memory.

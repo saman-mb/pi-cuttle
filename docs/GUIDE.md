@@ -24,9 +24,9 @@ user prompt
         local          cloud
            │            │
            ▼            ▼
-     smallest model   first resolvable
-     whose context    catalog entry
-     window ≥ score
+     smallest model   cheapest model
+     whose context    that fits the
+     window ≥ score   score
 ```
 
 - **The question** is a `choice` between `standard` (mechanical, well-scoped,
@@ -39,7 +39,11 @@ user prompt
 - **The specific local model** is picked from `catalog.local` by capacity: the router
   reads each candidate's context window from pi's registry and picks the smallest
   model whose capacity is at least the complexity score. If none fits, it picks the
-  largest. This keeps cheap small models on easy work without hard-coding capacities.
+  largest. Use the optional `capabilities` map when context window is a poor proxy
+  for ability.
+- **The specific cloud model** is picked from `catalog.cloud` by cost: among models
+  that fit the score, the cheapest (per pi's registry cost) wins. Catalog order is
+  only the final tiebreaker.
 - **Classifier failure** is never silent. If the classifier is missing, unavailable,
   or times out, routing falls back to the deterministic regex heuristic and the
   failure text is written into the decision reason, the debug log, and surfaced by

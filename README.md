@@ -134,7 +134,8 @@ are moved to the new names automatically.
 | `classifier.fallback` | `heuristic` \| `local` \| `cloud` when the classifier is unavailable. |
 | `classifier.timeoutMs` | How long to wait for the classifier answer. |
 | `classifier.stateChars` | Max characters of prompt sent to the classifier. |
-| `catalog.local` / `catalog.cloud` | Ordered candidate models. The router picks the smallest model whose context window can handle the complexity score. |
+| `catalog.local` / `catalog.cloud` | Candidate models. Local picks the smallest model that fits the complexity score; cloud picks the cheapest fitting model. Catalog order is the final tiebreaker. |
+| `capabilities` | Optional `provider/model -> [0,1]` map that overrides the context-window proxy for model selection and `cuttle/fast-local` ordering. |
 | `policy.mode` | `complexity` \| `cost` (bias local) \| `phase` (plan vs implement). |
 | `policy.reclassify` | `session` (default) or `turn`. |
 | `local.*` | Cross-process concurrency cap. See [docs/CONFIG.md](docs/CONFIG.md). |
