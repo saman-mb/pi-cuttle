@@ -128,6 +128,27 @@ test("session_start switches to cuttle/auto when autoSelect is true and a catalo
 	);
 });
 
+test("session_start respects an explicit --model=value flag even when autoSelect is true", async () => {
+	const originalArgv = process.argv;
+	process.argv = ["node", "pi", "--model=opencode-go/deepseek-v4.1-flash"];
+	await withTempConfig(
+		{
+			autoSelect: true,
+			catalog: { local: ["lmstudio/local-model"], cloud: ["cloud/big-model"] },
+		},
+		() => {
+			const { pi, events, calls } = createMockPI();
+			modelRouter(pi);
+			const handlers = events["session_start"] ?? [];
+			const handler = handlers[0];
+			assert.ok(handler);
+			handler({}, createContext({ provider: "opencode-go", id: "deepseek-v4.1-flash" }));
+			assert.equal(calls.setModel.length, 0, "setModel must not override an explicit --model=value");
+		},
+	);
+	process.argv = originalArgv;
+});
+
 test("session_start respects an explicit --model flag even when autoSelect is true", async () => {
 	const originalArgv = process.argv;
 	process.argv = ["node", "pi", "--model", "opencode-go/deepseek-v4.1-flash"];

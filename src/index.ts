@@ -38,7 +38,9 @@ function safeSessionId(ctx: { sessionManager?: { getSessionId?: () => string } }
 
 /** True when the user pinned a model on the command line; auto-select must not override it. */
 function explicitModelRequested(argv: readonly string[]): boolean {
-	return argv.includes("--model") || argv.includes("-m");
+	return argv.some(
+		(arg) => arg === "--model" || arg === "-m" || arg.startsWith("--model=") || arg.startsWith("-m="),
+	);
 }
 
 export default function modelRouter(pi: ExtensionAPI): void {
