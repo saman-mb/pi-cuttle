@@ -3,6 +3,29 @@
 All notable changes to this project. Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **`classifier.contextSource`** — choose what the decision model is shown. `last-message` (the
+  default) keeps today's behaviour: the newest user message, truncated by `stateChars`.
+  `conversation` sends a structured view of the session — latest message in full, recent assistant
+  turns, a tool-usage digest, and session size — inside `classifier.contextBudget` (default 8192,
+  max 64 000) with `classifier.conversationWindow` (default 3) assistant turns. `off` skips the
+  classifier and uses the heuristic. **The default has not changed**; `conversation` is opt-in.
+- **`classifier.contextShadow`** — when enabled, also classifies with the other signal source and
+  records both verdicts (and whether they agreed) in the shadow log. Observability only: the
+  alternate verdict never routes and never delays a turn.
+- **Shadow records name their signal path** — `shadow.jsonl` entries gain an optional `signalPath`
+  (`last-message`, `conversation`, `heuristic`, `off`). Older records without the field still read.
+- **12 thin-follow-up eval fixtures** — long context followed by a terse prompt whose correct tier
+  the terse text alone does not reveal. Corpus is now 124 fixtures.
+
+### Changed
+
+- **`/cuttle config` docs corrected**: a config change applies from the next routing decision — a
+  new session, or the next user turn when `policy.reclassify` is `"turn"` — not "the next turn".
+
 ## [0.5.0] — 2026-10-18
 
 ### Added

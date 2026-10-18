@@ -133,7 +133,11 @@ are moved to the new names automatically.
 | `classifier.model` | `provider/model` of a pi-registered classifier. Examples: `llama.cpp/ggml-org/Kev-9B-GGUF:Q8_0`, `opencode-go/some-classifier`. |
 | `classifier.fallback` | `heuristic` \| `local` \| `cloud` when the classifier is unavailable. |
 | `classifier.timeoutMs` | How long to wait for the classifier answer. |
-| `classifier.stateChars` | Max characters of prompt sent to the classifier. |
+| `classifier.stateChars` | Max characters of prompt sent to the classifier (applies when `contextSource` is `last-message`). |
+| `classifier.contextSource` | `last-message` (default) \| `conversation` \| `off`. What the classifier is shown; the default has not changed. |
+| `classifier.contextBudget` | Character cap for the conversation signal (default 8192, max 64000). |
+| `classifier.conversationWindow` | Recent assistant turns included in the conversation signal (default 3). |
+| `classifier.contextShadow` | Log both signal paths' verdicts for comparison (default `false`; observability only). |
 | `catalog.local` / `catalog.cloud` | Candidate models. Local picks the smallest model that fits the complexity score; cloud picks the cheapest fitting model. Catalog order is the final tiebreaker. |
 | `capabilities` | Optional `provider/model -> [0,1]` map that overrides the context-window proxy for model selection and `cuttle/fast-local` ordering. |
 | `policy.mode` | `complexity` \| `cost` (bias local) \| `phase` (plan vs implement). |
