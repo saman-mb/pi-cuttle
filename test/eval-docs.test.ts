@@ -43,7 +43,7 @@ test("the eval provider's default path is the heuristic, and the docs say so (#9
 	const provider = read("eval/pi-cuttle-provider.ts");
 	assert.match(
 		provider,
-		/model:\s*undefined/,
+		/model\s*[:=]\s*undefined/,
 		"the default eval provider runs the heuristic; if this changes, update docs/EVAL.md's layer table",
 	);
 	assert.match(
