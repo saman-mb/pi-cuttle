@@ -1,107 +1,177 @@
 # pi-cuttle routing enhancements: product impact
 
-This document describes what pi-cuttle users get from the routing, subagent, and
-reasoning-level enhancements shipped in 0.5.0.
+Plain-language description of what the routing, subagent and reasoning-level work in the
+0.5.x line actually does for you, and what it does not.
+
+Every claim below was checked against the code on the branch you are reading. Where a
+capability exists but is **off until you switch it on**, it says so: a feature you have to
+configure is not a feature you have. Where a capability does not exist at all, it is listed
+under [Not implemented](#not-implemented--listed-so-nobody-re-ships-it-as-a-claim) rather
+than quietly dropped, so the next reader does not rediscover the gap the hard way.
 
 ## Elevator pitch
 
-pi-cuttle now routes like a smart engineering manager: it puts the right brain on
-the right task, saves money on subagents, and adapts reasoning effort to the work.
-The main agent orchestrates with quality; subagents execute on your hardware.
+pi-cuttle picks a model per turn instead of per session. It reads the request, judges how
+hard it is, and spends either your hardware or a cloud provider's. On a machine with a good
+local model, most mechanical turns stay home; the turns that genuinely need a bigger brain
+go get one. Subagents and reasoning effort are steerable separately from the main session.
 
-## User outcomes
+## What you get, and whether it is on
 
-### 1. Subagents stop quietly burning cloud tokens
+| Capability | State | Turned on by |
+|---|---|---|
+| Per-turn routing (`cuttle/auto`) | On | Default when you select a `cuttle/*` model |
+| `/cuttle why` — explain the last routing choice | On | Default |
+| Per-role flavour assignment for subagents | On | pi's `subagents.agentOverrides`, if you set it |
+| Child sessions keep the model they were launched with | On | Default |
+| Subagent-only routing policy (`policy.subagent`) | **Opt-in** | Unset by default |
+| Thinking-level scaling (`policy.thinkingLevels`) | **Opt-in** | `enabled: false` by default |
+| Local bias (`policy.localBias`, `policy.mode: "cost"`) | **Opt-in** | Defaults keep the plain complexity bar |
+| Per-session cloud spend cap | **Does not exist** | — |
+| Prefer models already resident in memory | **Does not exist** | — |
 
-**Before:** A `/ship-issue` or background worker subagent could route to a cloud
-model even when a large local model could handle it.
+## Outcomes that work on a default install
 
-**After:** Background subagents automatically use a local-first policy. They only
-go to cloud when the task is genuinely beyond your local hardware.
+### Routing decides per turn, not per session
 
-**Result:** Lower cloud bills, more GPU utilization, faster subagent fan-out.
+Selecting a `cuttle/*` model routes each turn on its own difficulty. The default policy is
+`complexity` with a threshold of `0.5`: a turn scored above the bar goes to a cloud model,
+below it stays local. The decision is made once per user turn and held for continuations, so
+a session does not change horses mid-task.
 
-### 2. The main agent gets the quality headroom it needs
+**Result:** you stop paying for a top-tier model on turns that never needed one.
 
-**Before:** The main agent used the same routing logic as subagents, so complex
-orchestration work could land on a small local model.
+### `/cuttle why` tells you what was chosen and why
 
-**After:** The main session uses a balanced, quality-aware policy by default.
-Planning, architecture, and delegation lean toward larger local or cloud models.
+Run `/cuttle why` after a turn. It prints the flavour, the tier, the resolved model, the
+thinking level, the decision source and its score, which signal path produced it, whether the
+turn ran in a subagent, and the reason string.
 
-**Result:** Better plans, fewer "this model is too small for this task" moments.
+The signal path is shown deliberately: it names what the router was *actually* given, so a
+heuristic or pinned decision reads honestly instead of implying the classifier ran.
 
-### 3. Reasoning effort scales automatically
+**Result:** a routing choice that looks wrong is a two-second investigation, not a log dig.
 
-**Before:** Whatever `/thinking` level you set applied to every turn. A `high`
-setting made even trivial turns slow and expensive.
+### A subagent keeps the model it was launched with
 
-**After:** pi-cuttle maps task complexity to thinking level. Low-risk prompts use
-minimal/no reasoning; hard prompts use the level you selected.
+Child processes launched with a pinned physical model are left alone — `autoSelect` is skipped
+for `PI_SUBAGENT_CHILD=1` sessions and for anything carrying a `parentSession` header.
+Children launched with a `cuttle/*` flavour still route. This was the fix in 0.5.0 for
+subagent runs failing pi's model verification (#95).
 
-**Result:** Faster responses on simple tasks, preserved quality on hard ones.
+**Result:** pinning a model per role in `pi-subagents` config stops breaking at launch.
 
-### 4. Transparency into why a model was chosen
+### Per-role flavours, with a mapping that works today
 
-**Before:** When Cuttle picked a model, you had to read a debug log to understand
-why.
+Assign a Cuttle flavour per subagent role through pi's own `subagents.agentOverrides`
+setting; `cuttle/auto` is the global default for anything you do not override. A mapping that
+matches how the flavours behave right now:
 
-**After:** `/cuttle why` shows the exact reasoning: classifier score, subagent
-context, applied policy, selected model, and thinking level.
+| Role | Flavour | Why |
+|---|---|---|
+| `worker` | `cuttle/big-local` | Largest local model that fits; never spends cloud. |
+| `scout` | `cuttle/fast-local` | Smallest, fastest local model; never spends cloud. |
+| `oracle` | `cuttle/cloud` | Always cloud, for work genuinely beyond local hardware. |
+| `reviewer` | `cuttle/local` | Smallest model that can do the job; never spends cloud. |
+| `architect` | `cuttle/big-local` **or** `cuttle/cloud` | See the caveat below. |
 
-**Result:** Trust and faster debugging when a routing choice looks wrong.
+> **Caveat on `cuttle/orchestrator`.** It is documented elsewhere as "quality-first" and used
+> to be recommended for `architect`. It is not: `flavorBias()` forces the `orchestrator`
+> flavour to the **local** tier, so a planning agent mapped to it never reaches a cloud model.
+> Use `cuttle/big-local` if you want the largest local model, or `cuttle/cloud` if you want a
+> guaranteed cloud model, until
+> [#122](https://github.com/saman-mb/pi-cuttle/issues/122) settles whether the flavour gets its
+> documented behaviour or its documentation gets corrected.
 
-### 5. Role-based model assignment works out of the box
+`cuttle/local`, `cuttle/fast-local` and `cuttle/big-local` are hard-pinned local. When local
+is genuinely unavailable they fail with an error naming the cause and the remedy rather than
+silently spending cloud (0.5.1, #112).
 
-**Before:** You had to guess which Cuttle flavor to assign to which subagent role.
+**Result:** role-aware routing without tuning, and no surprises about which roles cost money.
 
-**After:** Documented recommended mappings ship with the release:
+## Outcomes you have to switch on
 
-| Role | Recommended flavor |
-|---|---|
-| `architect` | `cuttle/orchestrator` |
-| `worker` | `cuttle/big-local` |
-| `scout` | `cuttle/fast-local` |
-| `oracle` | `cuttle/cloud` |
+### Subagents can run a cheaper policy than the main session
 
-**Result:** Sensible defaults, less config tuning.
+`policy.subagent` overrides mode, threshold and the other policy knobs for turns running
+inside a pi-subagents child. Background children set `PI_SUBAGENT_CHILD=1`; the main agent
+does not, which is how the two are told apart.
 
-### 6. Already-loaded local models are preferred
+**It is unset by default.** Without it, subagents route with your main policy. To get the
+local-biased fan-out behaviour, write the block:
 
-**Before:** Cuttle could ask LM Studio for an unloaded model, causing a GPU load
-delay mid-turn.
+```json
+"policy": {
+  "mode": "complexity",
+  "threshold": 0.5,
+  "subagent": { "mode": "cost", "threshold": 0.5 }
+}
+```
 
-**After:** Models already resident in LM Studio memory are preferred.
+`cost` mode raises the cloud bar to at least `0.75`, so a subagent turn has to look genuinely
+hard before it leaves your hardware. Foreground subagents run inside the parent pi process and
+do not reload ambient extensions, so they use the parent's policy regardless.
 
-**Result:** Snappier first-token latency, especially during subagent fan-out.
+**Result:** lower cloud spend on mechanical fan-out — once you configure it.
 
-### 7. Cloud spend is capped per session
+### Reasoning effort can scale with the task
 
-**Before:** A long session with many cloud turns could run up an unexpected bill.
+`policy.thinkingLevels` maps complexity scores onto thinking levels, and the router only ever
+*lowers* your `/thinking` selection — it never raises it. The clamped level is held for
+continuations, so a session does not oscillate.
 
-**After:** A soft `sessionCloudBudget` gradually biases routing toward local as
-spend approaches the cap.
+**It is off by default** (`enabled: false`). Set `enabled: true` to get it.
 
-**Result:** Cost predictability without hard cutoffs.
+**Result:** faster, cheaper answers on trivial turns, at your option.
+
+### Cost levers you can pull today
+
+There is no spend cap, but routing already has two dials that push traffic toward local
+hardware: `policy.localBias` (raises the cloud bar by up to 0.5) and `policy.mode: "cost"`
+(raises it to at least 0.75). Decision telemetry writes every routing choice, with pricing
+where you have configured it, to `~/.pi/agent/pi-cuttle/decisions.jsonl` — that is where a
+cloud-share or cost-per-session number would come from.
+
+## Not implemented — listed so nobody re-ships it as a claim
+
+Two capabilities appeared in an earlier draft of this document as though they had shipped.
+Neither exists in the code, and neither is on the roadmap by itself:
+
+- **No per-session cloud budget.** There is no `sessionCloudBudget` setting, and no code path
+  that tracks cumulative cloud spend or biases routing as a cap approaches. Long sessions are
+  not cost-capped. The knobs above are the only cost control.
+- **No preference for already-loaded models.** Model selection weighs cost and context-window
+  fit. It never asks LM Studio, llama.cpp, Ollama or MTPLX which models are currently resident
+  in memory, and it cannot manage how many your server keeps loaded — see the governor notes in
+  [CONFIG.md](CONFIG.md). A mid-turn model-load delay is still possible.
+
+If you need either, that is a feature request, not a config mistake.
 
 ## Target users
 
 | User | Benefit |
 |---|---|
-| Solo developers with a fast Mac/GPU | Use their hardware instead of paying cloud providers |
-| Teams with cloud API keys | Cut token spend on mechanical subagent work |
-| Power users running `pi-subagents` | Better role-aware routing with less manual tuning |
-| Anyone using reasoning models | Automatic thinking-level optimization |
+| Solo developers with a fast Mac/GPU | Point mechanical work at hardware already paid for |
+| Teams with cloud API keys | Cap and audit what fan-out costs, once configured |
+| Power users running `pi-subagents` | Role-aware routing with less manual tuning |
+| Anyone using reasoning models | Trim thinking on easy turns, on purpose |
 
-## Success metrics
+## Success metrics — defined, none measured yet
 
-- **Cloud share:** % of subagent turns routed to cloud drops for typical tasks.
-- **Local utilization:** LM Studio / MTPLX load increases.
-- **User steering:** Fewer manual model switches after routing decisions.
-- **Cost per session:** Cloud spend decreases for equivalent output.
-- **Failure rate:** No increase in task failures due to under-powered local routing.
+These are the measurements that would show whether the routing work paid off. **None has been
+run.** Treat them as the definition of "we should check", not as results.
+
+- **Cloud share:** share of subagent turns routed to cloud, before and after enabling
+  `policy.subagent`.
+- **Local utilization:** LM Studio / MTPLX load during fan-out.
+- **User steering:** manual model switches after a routing decision.
+- **Cost per session:** cloud spend for equivalent output.
+- **Failure rate:** task failures caused by under-powered local routing.
+
+The material risk on the last one is real and unmeasured: routing a hard turn to hardware that
+cannot do it is a silent quality loss, and nothing yet detects it.
 
 ## In one sentence
 
-pi-cuttle becomes an intelligent load-balancer between your hardware and cloud
-providers, cutting costs on subagents while keeping the main agent sharp.
+pi-cuttle moves the choice of model from your session settings to the request in front of it,
+and costs less on subagents as soon as you switch the subagent policy on.
