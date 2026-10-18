@@ -1,0 +1,43 @@
+name: Eval
+
+# Layer 1 of the two-layer eval pipeline (see docs/EVAL.md).
+#
+# Runs the deterministic routing-policy fixtures on a GitHub-hosted runner. This
+# layer exercises the router's machinery — policy, thresholds, thinking-level
+# clamping, subagent override, flavors, gates — through a mocked model registry,
+# so it needs no local model server and no self-hosted runner.
+#
+# Layer 2 (scoring the real decision model against eval/corpus.jsonl) needs a
+# reachable classifier and runs on a self-hosted runner; see #84 and #97.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: ["22.x"]
+    env:
+      PROMPTFOO_DISABLE_TELEMETRY: "1"
+      PROMPTFOO_DISABLE_UPDATE: "1"
+      PROMPTFOO_DISABLE_SHARE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      - run: npm ci
+      - name: Routing-policy eval (heuristic layer)
+        run: npm run eval:promptfoo
+      - name: Upload eval results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: eval/results.json
+          if-no-files-found: warn
