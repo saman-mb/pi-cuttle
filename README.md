@@ -26,6 +26,9 @@ the server once in pi and the router just uses it.
 
 Status: **working core, live-verified.** See [Verification](#verification).
 
+Full user guide: [`docs/GUIDE.md`](docs/GUIDE.md) — what the decision model does per turn,
+how to enable routing, and how to read what it decided.
+
 ---
 
 ## Part of Cuttle
