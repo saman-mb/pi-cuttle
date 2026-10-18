@@ -216,7 +216,7 @@ Phase 1 verification (llama.cpp router classifier + MTPLX local):
 - A decision with a >10k-character state, still classifier-sourced.
 - A coding turn routed to `mtplx/...` and completed.
 
-See `docs/ARCHITECTURE.md` for design invariants and `docs/CONFIG.md` for all options.
+See `docs/ARCHITECTURE.md` for design invariants, `docs/CONFIG.md` for all options, and `docs/EVAL.md` for the Promptfoo-based eval pipeline and LangFuse feedback loop.
 
 ---
 

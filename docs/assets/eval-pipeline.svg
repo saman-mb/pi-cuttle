@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="527" height="880" viewBox="0 0 527 880" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+<rect x="0" y="0" width="527" height="880" fill="#14110F"/>
+<rect x="0.5" y="0.5" width="526" height="879" rx="16" fill="#1D1916" stroke="#332C26" stroke-width="1"/>
+<text x="263.5" y="21.08" text-anchor="middle" font-size="14" fill="#B3A99F">pi-cuttle eval pipeline</text>
+<line x1="228" y1="108" x2="228" y2="186" stroke="#D97757" stroke-width="2" stroke-linecap="round"/>
+<polygon points="228,186 222.5,175 233.5,175" fill="#D97757"/>
+<line x1="228" y1="232" x2="228" y2="310" stroke="#D97757" stroke-width="2" stroke-linecap="round"/>
+<polygon points="228,310 222.5,299 233.5,299" fill="#D97757"/>
+<line x1="228" y1="356" x2="228" y2="434" stroke="#D97757" stroke-width="2" stroke-linecap="round"/>
+<polygon points="228,434 222.5,423 233.5,423" fill="#D97757"/>
+<path d="M 428 333 C 482 333 482 581 365 581" fill="none" stroke="#D97757" stroke-width="2" stroke-linecap="round"/>
+<polygon points="365,581 376,575.5 376,586.5" fill="#D97757"/>
+<path d="M 311 457 C 387.5 457 387.5 705 333.5 705" fill="none" stroke="#D97757" stroke-width="2" stroke-linecap="round"/>
+<polygon points="333.5,705 344.5,699.5 344.5,710.5" fill="#D97757"/>
+<line x1="228" y1="728" x2="228" y2="806" stroke="#D97757" stroke-width="2" stroke-linecap="round"/>
+<polygon points="228,806 222.5,795 233.5,795" fill="#D97757"/>
+<path d="M 333.5 829 C 419 829 419 581 365 581" fill="none" stroke="#D97757" stroke-width="2" stroke-linecap="round"/>
+<polygon points="365,581 376,575.5 376,586.5" fill="#D97757"/>
+<rect x="158.5" y="62" width="139" height="46" rx="10" fill="#211C18" stroke="#4A4139" stroke-width="1.5"/>
+<text x="228" y="90.25" text-anchor="middle" font-size="15" fill="#F2EDE8">User prompt</text>
+<rect x="136" y="186" width="184" height="46" rx="10" fill="#211C18" stroke="#4A4139" stroke-width="1.5"/>
+<text x="228" y="214.25" text-anchor="middle" font-size="15" fill="#F2EDE8">pi-cuttle router</text>
+<rect x="28" y="310" width="400" height="46" rx="10" fill="#211C18" stroke="#4A4139" stroke-width="1.5"/>
+<text x="228" y="338.25" text-anchor="middle" font-size="15" fill="#F2EDE8">Routing decision
+(tier, model, thinking)</text>
+<rect x="145" y="434" width="166" height="46" rx="10" fill="#211C18" stroke="#4A4139" stroke-width="1.5"/>
+<text x="228" y="462.25" text-anchor="middle" font-size="15" fill="#F2EDE8">LangFuse trace</text>
+<rect x="91" y="558" width="274" height="46" rx="10" fill="#211C18" stroke="#4A4139" stroke-width="1.5"/>
+<text x="228" y="586.25" text-anchor="middle" font-size="15" fill="#F2EDE8">Promptfoo eval
+56 fixtures</text>
+<rect x="122.5" y="682" width="211" height="46" rx="10" fill="#211C18" stroke="#4A4139" stroke-width="1.5"/>
+<text x="228" y="710.25" text-anchor="middle" font-size="15" fill="#F2EDE8">Annotated misroutes</text>
+<rect x="122.5" y="806" width="211" height="46" rx="10" fill="#211C18" stroke="#4A4139" stroke-width="1.5"/>
+<text x="228" y="834.25" text-anchor="middle" font-size="15" fill="#F2EDE8">eval/promptfoo.yaml</text>
+<rect x="154.8" y="136" width="61.2" height="22" rx="6" fill="#1D1916"/>
+<text x="185.4" y="151.2" text-anchor="middle" font-size="12" fill="#E8916F">routes</text>
+<rect x="140.4" y="260" width="75.6" height="22" rx="6" fill="#1D1916"/>
+<text x="178.2" y="275.2" text-anchor="middle" font-size="12" fill="#E8916F">produces</text>
+<rect x="140.4" y="384" width="75.6" height="22" rx="6" fill="#1D1916"/>
+<text x="178.2" y="399.2" text-anchor="middle" font-size="12" fill="#E8916F">observed</text>
+<rect x="422.82" y="446" width="75.6" height="22" rx="6" fill="#1D1916"/>
+<text x="460.62" y="461.2" text-anchor="middle" font-size="12" fill="#E8916F">asserted</text>
+<rect x="340.59" y="570" width="61.2" height="22" rx="6" fill="#1D1916"/>
+<text x="371.19" y="585.2" text-anchor="middle" font-size="12" fill="#E8916F">tagged</text>
+<rect x="140.4" y="756" width="75.6" height="22" rx="6" fill="#1D1916"/>
+<text x="178.2" y="771.2" text-anchor="middle" font-size="12" fill="#E8916F">exported</text>
+<rect x="370.96" y="694" width="61.2" height="22" rx="6" fill="#1D1916"/>
+<text x="401.56" y="709.2" text-anchor="middle" font-size="12" fill="#E8916F">re-run</text>
+</svg>

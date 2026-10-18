@@ -2,6 +2,27 @@
 
 This document describes the pi-cuttle evaluation pipeline using Promptfoo.
 
+## Overview
+
+The eval pipeline verifies that pi-cuttle's routing decisions match expectations
+across all 0.5.0 features: complexity scoring, thinking-level clamping, subagent
+policy override, flavor routing, `/cuttle why`, `localBias`, `enforceUserCeiling`,
+and edge cases.
+
+![pi-cuttle eval pipeline](assets/eval-pipeline.svg)
+
+**Flow:**
+1. A user prompt is routed by pi-cuttle, producing a decision (tier, model, thinking level).
+2. The decision is asserted against 56 Promptfoo fixtures.
+3. The same decision is sent to LangFuse as a trace.
+4. Annotated misroutes in LangFuse are exported back into the fixture corpus.
+5. Re-running the eval verifies that fixes do not regress.
+
+**Key metrics:**
+- **Accuracy**: percentage of fixtures that pass all assertions.
+- **Misroute count**: user-flagged routing decisions exported from LangFuse.
+- **Latency**: per-fixture routing time (Promptfoo captures this automatically).
+
 ## Quick Start
 
 ```bash
@@ -11,18 +32,24 @@ npm run eval:promptfoo
 # View results in browser
 npm run eval:promptfoo:view
 
-# Convert existing corpus to Promptfoo format
+# Convert legacy corpus to Promptfoo format
 npm run eval:convert
+
+# Export misroutes from LangFuse and run them
+npm run eval:export-misroutes 7
+npm run eval:convert-misroutes
+npm run eval:promptfoo:misroutes
 ```
 
 ## Fixture Format
 
-Fixtures are defined in `eval/promptfoo.yaml` in Promptfoo-compatible YAML format. The legacy `eval/corpus.jsonl` can be converted to `eval/corpus-promptfoo.yaml` via `npm run eval:convert`.
+Fixtures are defined in `eval/promptfoo.yaml` in Promptfoo-compatible YAML format:
 
 ```yaml
 tests:
   - vars:
       prompt: "rename the variable `usrCnt` to `userCount`"
+      thinkingLevel: high
     assert:
       - type: javascript
         value: output.tier === 'local'
@@ -35,11 +62,12 @@ tests:
 
 ### Test Fields
 
-- **vars.prompt**: The user prompt to evaluate
-- **assert**: Array of assertions that must pass
-  - `type: javascript`: Custom JavaScript assertion evaluating the routing output
-  - Common checks: `output.tier`, `output.thinkingLevel`, `output.flavor`, `output.decision`
-- **metadata**: Optional test metadata for categorization and debugging
+- **vars.prompt**: The user prompt to evaluate.
+- **vars.flavor**: Optional virtual model flavor (`auto`, `local`, `cloud`, `fast-local`, `big-local`, `orchestrator`).
+- **vars.thinkingLevel**: Optional user thinking-level ceiling; use `high` when testing thinking-level clamping so the ceiling does not hide the mapped level.
+- **vars.isSubagent**: Set to `true` to simulate `PI_SUBAGENT_CHILD=1` and trigger the subagent policy override.
+- **assert**: Array of JavaScript assertions evaluating the routing output.
+- **metadata**: Optional test metadata for categorization and debugging.
 
 ### Output Schema
 
@@ -69,47 +97,124 @@ interface RoutingOutput {
 
 The test suite covers all pi-cuttle 0.5.0 features:
 
-1. **Complexity Scoring** (12 fixtures): Simple vs complex prompts
-2. **Thinking-Level Clamping** (8 fixtures): Prompts at various complexity levels
-3. **Subagent Policy Override** (6 fixtures): Subagent role detection
+1. **Complexity Scoring** (12 fixtures): Simple vs complex prompts.
+2. **Thinking-Level Clamping** (8 fixtures): Prompts at various complexity levels mapped to `off`, `low`, `medium`, `high`.
+3. **Subagent Policy Override** (6 fixtures): Subagent role detection forces local routing.
 4. **Flavor Routing** (16 fixtures):
-   - big-local (4): Large local model orchestration
-   - orchestrator (4): Architecture and planning tasks
-   - fast-local (4): Quick validation tasks
-   - auto (4): Default routing behavior
-5. **/cuttle why Support** (4 fixtures): Decision explainability
-6. **localBias Configuration** (3 fixtures): Local preference tuning
-7. **enforceUserCeiling** (3 fixtures): User thinking level caps
-8. **Edge Cases** (4 fixtures): Empty prompts, minimal input
+   - `big-local` (4): Selects the largest local model (`bonsai-27b`).
+   - `orchestrator` (4): Current behavior routes local; fixtures assert documented behavior.
+   - `fast-local` (4): Selects the smallest local model (`muse-glimmer`).
+   - `auto` (4): Default routing behavior.
+5. **`/cuttle why` Support** (4 fixtures): Decision metadata must be present and explainable.
+6. **`localBias` Configuration** (3 fixtures): Borderline mixed-signal prompts stay local because of bias.
+7. **`enforceUserCeiling`** (3 fixtures): Output thinking level respects the user's `/thinking` selection.
+8. **Edge Cases** (4 fixtures): Empty prompts, single characters, very long prompts, minimal input.
 
-Total: 56 fixtures
+Total: 56 fixtures.
 
-## Custom Provider
+### Example: Adding a Thinking-Level Fixture
 
-The provider (`eval/pi-cuttle-provider.ts`) mocks the pi ExtensionContext and calls `routeRequest()` directly. No live model server is needed for routing decisions.
+```yaml
+  - vars:
+      prompt: "explain the threading model in Node.js"
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.thinkingLevel === 'medium'
+    metadata: { category: thinking-levels }
+```
 
-### Mocked Models
+### Example: Adding a Flavor Fixture
 
-- **lmstudio/meta/muse-glimmer**: Small local model (131K context)
-- **lmstudio/prism-ml/bonsai-27b**: Large local model (262K context)
-- **opencode-go/deepseek-v4.1-flash**: Cloud model (1M context)
+```yaml
+  - vars:
+      prompt: "review this PR for concurrency bugs"
+      flavor: orchestrator
+      thinkingLevel: high
+    assert:
+      - type: javascript
+        value: output.flavor === 'orchestrator'
+      - type: javascript
+        value: output.tier === 'local'
+    metadata: { category: flavor-orchestrator }
+```
 
-### Configuration
+## Running Eval
 
-The provider uses default router config with:
-- Heuristic classifier (no live model required)
-- Local bias: 0.1
-- Thinking levels enabled with enforceUserCeiling: true
-- Catalog: 2 local models, 1 cloud model
+### Local
 
-## Migration from Legacy Eval
+```bash
+# Full Promptfoo eval
+npm run eval:promptfoo
 
-The legacy eval system (`eval/run.ts`, `eval/score.ts`, `eval/corpus.jsonl`) is still available but deprecated. To migrate:
+# View the HTML report
+npm run eval:promptfoo:view
 
-1. Run `npm run eval:convert` to convert corpus.jsonl to Promptfoo format
-2. Review generated fixtures in `eval/corpus-promptfoo.yaml`
-3. Add category-specific tests as needed
-4. Run both systems in parallel during transition
+# Legacy heuristic eval (still supported)
+npm run eval
+```
+
+### CI
+
+```yaml
+- name: Run Promptfoo eval
+  run: npm run eval:promptfoo
+
+- name: Upload results
+  uses: actions/upload-artifact@v4
+  with:
+    name: eval-results
+    path: eval/results.json
+```
+
+## Interpreting Results
+
+Promptfoo prints a table with each prompt, the routing output, and pass/fail status.
+At the bottom it reports:
+
+```
+Results:
+  ✓ 56 passed (100%)
+  ✗ 0 failed (0%)
+  0 errors (0%)
+```
+
+If a fixture fails:
+1. Find the failing prompt in the table.
+2. Check the actual `output.tier`, `output.thinkingLevel`, and `output.modelId`.
+3. Compare against the assertion and the fixture's `metadata`.
+4. Decide whether the fixture expectation is wrong or the router behavior is wrong.
+
+## Debugging Failing Fixtures
+
+1. **Run the provider in isolation:**
+   ```bash
+   node --experimental-strip-types -e "
+   import { heuristicScore } from './src/classifier.ts';
+   console.log(heuristicScore('your prompt here'));
+   "
+   ```
+
+2. **Inspect a single fixture with Promptfoo:**
+   Temporarily remove all other fixtures from `eval/promptfoo.yaml` and run:
+   ```bash
+   npm run eval:promptfoo
+   ```
+
+3. **Check the provider output:**
+   The Promptfoo table shows the full JSON output for each failing test.
+
+4. **Common issues:**
+   - Wrong tier: check `policy.threshold` and `policy.localBias` in the provider config.
+   - Wrong thinking level: check `thinkingLevels.map` thresholds and ensure `vars.thinkingLevel` is set to `high` when testing the full mapped level.
+   - Wrong model: check `capabilities` in the provider config; `big-local` sorts by capability descending, `fast-local` ascending.
+
+## Adding Test Categories
+
+1. Add a new `metadata.category` value (e.g., `my-feature`).
+2. Add fixtures under a new commented section in `eval/promptfoo.yaml`.
+3. Update the category list in this document.
+4. Run `npm run eval:promptfoo` and commit only when all fixtures pass.
 
 ## Observability and Feedback Loop
 
@@ -138,24 +243,19 @@ To use this for continuous improvement:
 6. Once fixes are verified, promote fixtures from `eval/misroutes-promptfoo.yaml`
    into `eval/promptfoo.yaml` so they are enforced by the main eval.
 
-## CI Integration
+## Migration from Legacy Eval
 
-Add to GitHub Actions workflow:
+The legacy eval system (`eval/run.ts`, `eval/score.ts`, `eval/corpus.jsonl`) is still
+available via `npm run eval` but is no longer the source of truth for new features.
+To migrate:
 
-```yaml
-- name: Run Promptfoo eval
-  run: npm run eval:promptfoo
+1. Run `npm run eval:convert` to convert `corpus.jsonl` to `eval/corpus-promptfoo.yaml`.
+2. Review the generated fixtures.
+3. Add category-specific tests to `eval/promptfoo.yaml`.
+4. Run both systems in parallel during transition.
 
-- name: Upload results
-  uses: actions/upload-artifact@v4
-  with:
-    name: eval-results
-    path: eval/results.json
-```
+## References
 
-## Troubleshooting
-
-- **"Provider not found"**: Ensure `eval/pi-cuttle-provider.ts` exists and exports a default function
-- **TypeScript errors**: Run `npm run typecheck` to verify types
-- **Fixture syntax errors**: Validate YAML with a linter or use `promptfoo view` to debug
-- **Missing assertions**: Check that output schema matches expected fields
+- `docs/CONFIG.md` — observability configuration
+- `docs/LANGFUSE.md` — self-hosting LangFuse
+- `eval/pi-cuttle-provider.ts` — custom Promptfoo provider
