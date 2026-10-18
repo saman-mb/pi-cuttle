@@ -540,6 +540,15 @@ test("#112 (C): an unresolvable local ref on big-local rejects instead of spilli
 	);
 });
 
+test("#112 (C2): a local-only turn over the local window rejects instead of spilling", async () => {
+	const cfg = config();
+	const { rt } = runtime(cfg);
+	await assertRejectsWith(
+		() => routeRequest(rt, "big-local", { ...baseReq, reason: "user" } as never, ctxWith({ window: 1000, tokens: 999 })),
+		[/cuttle\/big-local is local-only/, /context exceeds local window/, /larger context window/],
+	);
+});
+
 test("#112 (D): struggle escalation never fires for a local-only flavor", async () => {
 	const cfg = config({
 		policy: { ...DEFAULTS.policy, escalate: { enabled: true, window: 8, toolErrors: 1, cleanTurns: 2 } },
