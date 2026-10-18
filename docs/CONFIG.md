@@ -209,11 +209,15 @@ does not flip levels mid-turn.
 | Flavor | Behavior |
 |---|---|
 | `cuttle/auto` | Classifier decides local vs cloud. Main agent default. |
-| `cuttle/local` | Always local, smallest model that fits. |
-| `cuttle/big-local` | Always local, **largest** model that fits. For orchestration work. |
+| `cuttle/local` | Always local, smallest model that fits. Never routes to cloud. |
+| `cuttle/big-local` | Always local, **largest** model that fits. For orchestration work. Never routes to cloud. |
 | `cuttle/orchestrator` | Quality-first. Uses a lower effective cloud threshold so planning/delegation leans toward larger models. |
-| `cuttle/fast-local` | Always local, fastest/smallest model. |
+| `cuttle/fast-local` | Always local, fastest/smallest model. Never routes to cloud. |
 | `cuttle/cloud` | Always cloud. |
+
+`cuttle/local`, `cuttle/fast-local`, and `cuttle/big-local` are hard-pinned to local: they
+never route to cloud. When local is genuinely unavailable they fail with an actionable error
+naming the cause and remedy, rather than silently spilling the turn to cloud.
 
 ### Recommended subagent role mapping
 
@@ -241,7 +245,7 @@ is filesystem-based.
 | `maxConcurrent` | number | `1` | Max concurrent local requests across all pi processes. |
 | `maxConcurrentPerModel` | number | `1` | Max concurrent requests per local model. |
 | `maxConcurrentByFlavor` | object | unset | Per-virtual-model budgets, e.g. `{ "local": 1, "fast-local": 1 }`. |
-| `onFull` | `"spill"` \| `"wait"` | `"spill"` | Route to cloud immediately, or wait for a slot. |
+| `onFull` | `"spill"` \| `"wait"` | `"spill"` | For `cuttle/auto`: route to cloud immediately, or wait for a slot. The always-local flavors (`cuttle/local`, `cuttle/fast-local`, `cuttle/big-local`) never spill; they error when local is unavailable. |
 | `waitMs` | number | `20000` | Wait budget before spilling when `onFull: "wait"`. |
 | `slotDir` | string | `~/.pi/agent/pi-cuttle/slots` | Where slot files live. `~` expands. |
 | `staleSlotMs` | number | `300000` | A slot older than this is reaped. |
