@@ -1,0 +1,10 @@
+{"prompt": "list files in current directory", "expectedTier": "local", "expectedThinkingLevel": "off", "features": ["thinkingLevels"], "notes": "Simple task, score < 0.2, no thinking"}
+{"prompt": "what is 2+2", "expectedTier": "local", "expectedThinkingLevel": "off", "features": ["thinkingLevels"], "notes": "Trivial question, score < 0.2, no thinking"}
+{"prompt": "explain how the router decides which model to use", "expectedTier": "local", "expectedThinkingLevel": "off", "features": ["thinkingLevels"], "notes": "Simple explanation, score=0.15 (local keyword), below 0.2 threshold"}
+{"prompt": "design a caching strategy for subagent results", "expectedTier": "cloud", "expectedThinkingLevel": "high", "features": ["thinkingLevels"], "notes": "Complex design task, score > 0.75, high thinking"}
+{"prompt": "refactor the API layer to use async/await", "expectedTier": "cloud", "expectedThinkingLevel": "high", "features": ["thinkingLevels"], "notes": "Complex refactoring, cloud keyword, score > 0.75"}
+{"prompt": "rename the variable usrCnt to userCount in src/auth.ts", "expectedTier": "local", "expectedThinkingLevel": "off", "features": ["thinkingLevels"], "notes": "Simple rename, local keyword, score < 0.2"}
+{"prompt": "You are the Planner for shipmates-ship-issue run on issue", "expectedTier": "local", "expectedThinkingLevel": "low", "features": ["subagent"], "notes": "Subagent task, score=0.31 (length only), between 0.2-0.4 threshold → low"}
+{"prompt": "implement the worker task for code generation", "expectedTier": "cloud", "expectedThinkingLevel": "high", "features": ["subagent"], "notes": "Worker task, score=0.75 (cloud keyword 'implement'), routes cloud"}
+{"prompt": "analyze the architecture and propose improvements", "expectedTier": "cloud", "expectedThinkingLevel": "high", "features": ["orchestrator"], "notes": "Complex analysis, cloud keywords, score > 0.75"}
+{"prompt": "quick syntax check on this function", "expectedTier": "local", "expectedThinkingLevel": "low", "features": ["fast-local"], "notes": "Quick check, score=0.30 (length only), between 0.2-0.4 threshold → low"}
