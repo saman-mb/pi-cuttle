@@ -112,6 +112,113 @@ test("classifier via modelRegistry: high complexity -> cloud", async () => {
 	assert.equal(d.source, "classifier");
 });
 
+test("default and last-message modes pass the clipped prompt to the classifier", async () => {
+	for (const config of [
+		{ ...DEFAULTS, classifier: { ...DEFAULTS.classifier, model: "llama.cpp/kev" } },
+		{ ...DEFAULTS, classifier: { ...DEFAULTS.classifier, model: "llama.cpp/kev", contextSource: "last-message" as const } },
+	]) {
+		let receivedPrompt: string | undefined;
+		const ctx = {
+			modelRegistry: {
+				findOfType: () => ({ id: "kev", provider: "llama.cpp" }),
+				classify: async (_model: unknown, input: { state: { prompt: string } }) => {
+					receivedPrompt = input.state.prompt;
+					return { stopReason: "stop", answers: { complexity: { type: "choice", choice: "standard", probabilities: { complex: 0.1 } } } };
+				},
+			},
+		} as unknown as ExtensionContext;
+		const prompt = "rename the temporary variable";
+		await decideTier({ config, prompt, ctx });
+		assert.equal(receivedPrompt, prompt.slice(0, config.classifier.stateChars));
+	}
+});
+
+test("conversation mode passes formatted assistant and user context to the classifier", async () => {
+	let receivedPrompt: string | undefined;
+	const ctx = {
+		modelRegistry: {
+			findOfType: () => ({ id: "kev", provider: "llama.cpp" }),
+			classify: async (_model: unknown, input: { state: { prompt: string } }) => {
+				receivedPrompt = input.state.prompt;
+				return { stopReason: "stop", answers: { complexity: { type: "choice", choice: "complex", probabilities: { complex: 0.9 } } } };
+			},
+		},
+	} as unknown as ExtensionContext;
+	const messages = [
+		{ role: "assistant", content: "I traced the earlier failure to a cache invalidation race." },
+		{ role: "user", content: "Now compare the two safe migration approaches." },
+	] as never;
+	const decision = await decideTier({
+		config: {
+			...DEFAULTS,
+			classifier: { ...DEFAULTS.classifier, model: "llama.cpp/kev", contextSource: "conversation" },
+		},
+		prompt: "Now compare the two safe migration approaches.",
+		messages,
+		ctx,
+	});
+	assert.equal(decision.source, "classifier");
+	assert.ok(receivedPrompt?.includes("[assistant]\nI traced the earlier failure"));
+	assert.ok(receivedPrompt?.includes("[user]\nNow compare the two safe migration approaches."));
+	assert.notEqual(receivedPrompt, "Now compare the two safe migration approaches.");
+});
+
+test("off mode skips the classifier and returns a heuristic decision", async () => {
+	let classifierCalls = 0;
+	const ctx = {
+		modelRegistry: {
+			findOfType: () => ({ id: "kev", provider: "llama.cpp" }),
+			classify: async () => {
+				classifierCalls++;
+				return { stopReason: "stop", answers: {} };
+			},
+		},
+	} as unknown as ExtensionContext;
+	const decision = await decideTier({
+		config: { ...DEFAULTS, classifier: { ...DEFAULTS.classifier, model: "llama.cpp/kev", contextSource: "off" } },
+		prompt: "refactor the architecture across the codebase",
+		ctx,
+	});
+	assert.equal(classifierCalls, 0);
+	assert.equal(decision.source, "heuristic");
+	assert.equal(decision.tier, "cloud");
+});
+
+test("formatter failure or empty signal falls back to last-message and is reported", async () => {
+	for (const [contextBuilder, expectedFailure] of [
+		[() => { throw new Error("formatting broke"); }, /formatting broke/],
+		[() => "", /empty context/],
+	] as const) {
+		let receivedPrompt: string | undefined;
+		const logs: string[] = [];
+		const ctx = {
+			modelRegistry: {
+				findOfType: () => ({ id: "kev", provider: "llama.cpp" }),
+				classify: async (_model: unknown, input: { state: { prompt: string } }) => {
+					receivedPrompt = input.state.prompt;
+					return { stopReason: "stop", answers: { complexity: { type: "choice", choice: "standard", probabilities: { complex: 0.1 } } } };
+				},
+			},
+		} as unknown as ExtensionContext;
+		const prompt = "rename a variable safely";
+		const decision = await decideTier({
+			config: {
+				...DEFAULTS,
+				classifier: { ...DEFAULTS.classifier, model: "llama.cpp/kev", contextSource: "conversation", stateChars: 9 },
+			},
+			prompt,
+			ctx,
+			contextBuilder,
+			log: (message) => logs.push(message),
+		});
+		assert.equal(receivedPrompt, prompt.slice(0, 9));
+		assert.equal(decision.source, "classifier");
+		assert.match(decision.reason, expectedFailure);
+		assert.match(decision.classifierFailure?.message ?? "", expectedFailure);
+		assert.match(logs.join("\n"), /falling back to last-message/);
+	}
+});
+
 test("classifier via modelRegistry: low complexity -> local", async () => {
 	const ctx = fakeCtx({
 		stopReason: "stop",

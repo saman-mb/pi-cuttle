@@ -10,6 +10,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ClassifierQuestion, Message } from "@earendil-works/pi-ai";
 
+import { buildClassifierContext } from "./classifier-context.ts";
 import { isSubagent } from "./subagent.ts";
 import type {
 	ChoiceGateConfig,
@@ -246,6 +247,8 @@ export async function decideTier(input: {
 	skipClassifier?: boolean;
 	/** Optional router log sink; receives trim and failure lines. */
 	log?: (message: string) => void;
+	/** Formatter override for deterministic failure-path tests. */
+	contextBuilder?: typeof buildClassifierContext;
 }): Promise<Decision> {
 	const { config, prompt, ctx, messages, forced, skipClassifier, log } = input;
 	if (forced) return { tier: forced, score: 0, source: "pin", reason: `pinned ${forced}` };
@@ -253,6 +256,7 @@ export async function decideTier(input: {
 		const h = heuristicDecision(config, prompt);
 		return { ...h, source: "heuristic", reason: `${h.reason} (classifier back off)` };
 	}
+	if (config.classifier.contextSource === "off") return heuristicDecision(config, prompt);
 	if (config.classifier.fallback === "heuristic" && !config.classifier.model) return heuristicDecision(config, prompt);
 
 	const ref = config.classifier.model;
@@ -260,7 +264,21 @@ export async function decideTier(input: {
 	const parsed = splitRef(ref);
 	if (!parsed) return heuristicDecision(config, prompt);
 
-	const clipped = prompt.slice(0, config.classifier.stateChars);
+	let classifierPrompt = prompt.slice(0, config.classifier.stateChars);
+	let contextFailure: string | undefined;
+	if (config.classifier.contextSource === "conversation") {
+		try {
+			const formatted = (input.contextBuilder ?? buildClassifierContext)(messages ?? [], {
+				budget: config.classifier.contextBudget,
+				window: config.classifier.conversationWindow,
+			});
+			if (typeof formatted !== "string" || formatted.length === 0) throw new Error("formatter returned empty context");
+			classifierPrompt = formatted;
+		} catch (error) {
+			contextFailure = error instanceof Error ? error.message : String(error);
+			log?.(`classifier context: ${contextFailure}; falling back to last-message`);
+		}
+	}
 	let classifierError: string | undefined;
 	try {
 		const model = ctx.modelRegistry.findOfType("classifier", parsed.provider, parsed.id);
@@ -269,7 +287,7 @@ export async function decideTier(input: {
 		const result = await ctx.modelRegistry.classify(
 			model,
 			{
-				state: { prompt: clipped },
+				state: { prompt: classifierPrompt },
 				questions,
 			},
 			{ signal: AbortSignal.timeout(config.classifier.timeoutMs) },
@@ -286,13 +304,15 @@ export async function decideTier(input: {
 				tier,
 				score: complex,
 				source: "classifier",
-				reason: `classifier p(complex)=${complex.toFixed(2)}${gateSummary}`,
+				reason: `classifier p(complex)=${complex.toFixed(2)}${gateSummary}${contextFailure ? ` (context formatter failed: ${contextFailure})` : ""}`,
+				...(contextFailure ? { classifierFailure: { ref, message: `context formatter failed: ${contextFailure}` } } : {}),
 				gates,
 			};
 		}
 		throw new Error("classifier returned no parseable complexity answer");
 	} catch (error) {
 		classifierError = error instanceof Error ? error.message : String(error);
+		if (contextFailure) classifierError = `context formatter failed: ${contextFailure}; classifier: ${classifierError}`;
 		log?.(`classifier: ${classifierError}`);
 	}
 
