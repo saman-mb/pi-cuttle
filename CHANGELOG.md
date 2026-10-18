@@ -3,6 +3,21 @@
 All notable changes to this project. Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [SemVer](https://semver.org/).
 
+## [0.6.1] — 2026-10-18
+
+### Fixed
+
+- **A subagent child no longer dies on `Model "cuttle/local:high" not found` (#131).** `cuttle/*`
+  are virtual models registered with `pi.registerVirtualModel`, and a foreground child neither
+  loads the parent's ambient extensions nor inherits its virtual models — so a child launched on
+  the model the launcher inherited from a routed parent failed at preflight, in tens of
+  milliseconds, having spent nothing. Any crew run from a session on `cuttle/*` failed this way
+  every time. The router now registers itself as a required child extension on `session_start`
+  (`pi-subagents`' `registerRequiredChildExtensions`), using the path pi loaded it from, so every
+  child loads the router with no per-user config. The integration is optional: if `pi-subagents`
+  is absent or its API drifts, the router logs to `PI_CUTTLE_DEBUG` and the session still starts.
+  The manual `subagents.defaultSubagentOnlyExtensions` setup keeps working as a fallback.
+
 ## [0.6.0] — 2026-10-18
 
 ### Added
@@ -284,7 +299,8 @@ OpenAI-compatible host behind the same abstraction.
 - The heuristic scored 70.5% on the routing corpus (33 cloud prompts misrouted to
   local); rewritten as signal-based scoring, measured at 100% on the corpus (#43).
 
-[Unreleased]: https://github.com/saman-mb/pi-cuttle/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/saman-mb/pi-cuttle/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.6.1
 [0.6.0]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.6.0
 [0.5.1]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.5.1
 [0.5.0]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.5.0

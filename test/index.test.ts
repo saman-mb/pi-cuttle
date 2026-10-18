@@ -333,3 +333,51 @@ test("a subagent child launched on cuttle/auto is left to route through its mess
 		else process.env[SUBAGENT_CHILD_ENV] = original;
 	}
 });
+
+test("session_start still completes when pi-subagents is not installed (#131)", async () => {
+	// The repo does not depend on pi-subagents, so the real dynamic import fails here — exactly
+	// the production fallback path. The router must log it and keep going, never fail the session.
+	const debugPath = join(tmpdir(), `cuttle-required-child-${process.pid}-${Date.now()}.log`);
+	const originalDebug = process.env.PI_CUTTLE_DEBUG;
+	process.env.PI_CUTTLE_DEBUG = debugPath;
+	try {
+		await withTempConfig(
+			{
+				autoSelect: true,
+				local: { preload: false, pinClassifier: false },
+				catalog: { local: ["lmstudio/local-model"], cloud: ["cloud/big-model"] },
+			},
+			async () => {
+				const { pi, events, calls } = createMockPI();
+				modelRouter(pi);
+				const handler = (events["session_start"] ?? [])[0];
+				assert.ok(handler);
+				await assert.doesNotReject(async () =>
+					handler({}, createContext({ provider: "opencode-go", id: "deepseek-v4.1-flash" })),
+				);
+				assert.equal(
+					calls.setModel.length,
+					1,
+					"routing still works when the optional integration is missing",
+				);
+				assert.ok(existsSync(debugPath), "the soft failure is logged, not swallowed silently");
+				const logged = readFileSync(debugPath, "utf8");
+				assert.match(logged, /required-child-extension registration failed/);
+			},
+		);
+	} finally {
+		if (originalDebug === undefined) delete process.env.PI_CUTTLE_DEBUG;
+		else process.env.PI_CUTTLE_DEBUG = originalDebug;
+		rmSync(debugPath, { force: true });
+	}
+});
+
+test("session_shutdown disposes the required-child-extension registration (#131)", async () => {
+	await withTempConfig({ autoSelect: false, local: { preload: false, pinClassifier: false } }, () => {
+		const { pi, events } = createMockPI();
+		modelRouter(pi);
+		const shutdown = (events["session_shutdown"] ?? [])[0];
+		assert.ok(shutdown, "the extension registers a session_shutdown handler");
+		assert.doesNotThrow(() => shutdown({}, createContext()));
+	});
+});

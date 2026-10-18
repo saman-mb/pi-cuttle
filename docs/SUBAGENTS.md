@@ -8,7 +8,7 @@ and only one is reliable (verified on pi 1.2.0 + the installed `pi-subagents`):
 
 | Child type | Ambient extensions loaded? | Virtual models resolve? |
 |---|---|---|
-| Foreground, no `subagentOnlyExtensions` | No | **No** — falls through to an unrelated provider |
+| Foreground, no `subagentOnlyExtensions` | No | **Yes** on pi-subagents builds exposing `registerRequiredChildExtensions` (the router registers itself, #131); otherwise **No** — falls through to an unrelated provider |
 | Foreground, with `subagentOnlyExtensions` | Yes (explicitly listed) | **Yes** |
 | Background | Yes (detached runner) | Yes |
 
@@ -27,8 +27,19 @@ fails with `Unknown subagent model 'cuttle/auto' in the active Pi model registry
 pi install git:github.com/saman-mb/pi-cuttle
 ```
 
-Then add the router to `subagents.defaultSubagentOnlyExtensions` so every child loads it and
-its `session_start` handler selects `cuttle/auto`:
+That is the whole setup. Since #131 the router registers **itself** as a required child extension
+on `session_start` (`registerRequiredChildExtensions`, using the path pi loaded it from), so every
+child loads it with no config. Foreground children stop dying on an inherited `cuttle/local:high`
+with `Model "cuttle/local:high" not found`.
+
+That integration is optional and every failure is soft: if `pi-subagents` is absent or its API has
+drifted, the router logs to `PI_CUTTLE_DEBUG` and the session still starts. pi-cuttle has no runtime
+dependency on pi-subagents.
+
+### Manual fallback
+
+Older `pi-subagents` builds, or a pi that cannot load the extension by path, can list the router
+explicitly. This still works and is still honoured — it is simply no longer required:
 
 ```json
 {
@@ -45,6 +56,9 @@ The router never overrides a pinned model in a child: `autoSelect` is skipped in
 child processes (`PI_SUBAGENT_CHILD=1`) and in any session with a `parentSession` header
 (foreground children and forks). Children route because the launcher chose `cuttle/auto`,
 not because `session_start` re-claimed them — so per-agent physical models keep working.
+
+A child that itself delegates registers under its own session id, so a nested subagent gets the
+router too; the parent's snapshot is untouched.
 
 ## Per-role policies
 
