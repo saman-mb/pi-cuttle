@@ -140,6 +140,12 @@ When `cuttle/auto` runs inside a pi-subagents child process, it automatically ap
 the `subagent` policy override. Background subagents set `PI_SUBAGENT_CHILD=1` in their
 environment; the main agent does not.
 
+A child session is never re-claimed by `autoSelect`: the launcher's model wins. Subagent
+children (`PI_SUBAGENT_CHILD=1`) and any session with a `parentSession` header — foreground
+children and forks — keep the model chosen for them, so pinning a physical model per agent
+does not trip pi-subagents' model verification (#95). Children still route when launched
+with a `cuttle/*` model.
+
 ```json
 "policy": {
   "mode": "complexity",

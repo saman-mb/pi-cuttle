@@ -41,6 +41,11 @@ its `session_start` handler selects `cuttle/auto`:
 
 Use the absolute path. `~` is expanded by pi, but explicit paths avoid ambiguity.
 
+The router never overrides a pinned model in a child: `autoSelect` is skipped in subagent
+child processes (`PI_SUBAGENT_CHILD=1`) and in any session with a `parentSession` header
+(foreground children and forks). Children route because the launcher chose `cuttle/auto`,
+not because `session_start` re-claimed them — so per-agent physical models keep working.
+
 ## Per-role policies
 
 Each virtual model is a policy. Map roles to them with pi's native model config; the router

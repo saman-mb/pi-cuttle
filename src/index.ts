@@ -14,12 +14,17 @@
  *   - #25: `message_end` fires exactly once per assistant message.
  *   - #28: children only route if they load this extension, so the documented setup adds it
  *          to `subagents.defaultSubagentOnlyExtensions`.
+ *   - #95: auto-select never claims a session whose model was already chosen — subagent
+ *          children (`PI_SUBAGENT_CHILD=1`) and any session with a `parentSession` header
+ *          (foreground children, forks). Claiming a child fails pi-subagents' model
+ *          verification against its launch candidate.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { appendFileSync } from "node:fs";
 
 import { loadConfig } from "./config.ts";
 import { splitRef } from "./classifier.ts";
+import { isSubagent } from "./subagent.ts";
 import { LocalGovernor } from "./governor.ts";
 import { registerCuttleCommand } from "./commands.ts";
 import { Telemetry, isPhysicalTurn } from "./telemetry.ts";
@@ -42,6 +47,18 @@ function explicitModelRequested(argv: readonly string[]): boolean {
 	return argv.some(
 		(arg) => arg === "--model" || arg === "-m" || arg.startsWith("--model=") || arg.startsWith("-m="),
 	);
+}
+
+/**
+ * True when this session was created by another session — a subagent child, a fork, or a clone.
+ * Those already have a model chosen for them, so auto-select must not claim them (#95).
+ */
+function hasParentSession(ctx: { sessionManager?: { getHeader?: () => { parentSession?: string } | null | undefined } }): boolean {
+	try {
+		return Boolean(ctx.sessionManager?.getHeader?.()?.parentSession);
+	} catch {
+		return false;
+	}
 }
 
 export default function modelRouter(pi: ExtensionAPI): void {
@@ -80,6 +97,17 @@ export default function modelRouter(pi: ExtensionAPI): void {
 		if (!rt.config.autoSelect) return;
 		if (explicitModelRequested(process.argv)) return;
 		if (ctx.model?.provider === VIRTUAL_PROVIDER) return;
+		// #95: a session created by another session already has a model chosen for it — a subagent
+		// child gets its launcher's candidate, a fork inherits its parent's. Children that should
+		// route arrive on a `cuttle/*` model and are handled by the guard above.
+		if (isSubagent()) {
+			log?.("session_start subagent child, leaving model unchanged");
+			return;
+		}
+		if (hasParentSession(ctx)) {
+			log?.("session_start child session, leaving model unchanged");
+			return;
+		}
 		if (rt.config.catalog.local.length === 0 && rt.config.catalog.cloud.length === 0) {
 			log?.("session_start no catalog configured, leaving model unchanged");
 			return;

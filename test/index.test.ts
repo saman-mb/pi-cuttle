@@ -8,6 +8,11 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 
 import { DEFAULTS } from "../src/config.ts";
 import modelRouter from "../src/index.ts";
+import { SUBAGENT_CHILD_ENV } from "../src/subagent.ts";
+
+// Auto-select is skipped inside pi-subagents children (#95), so clear any inherited marker and
+// keep this suite deterministic whether it runs from a shell or inside a subagent.
+delete process.env[SUBAGENT_CHILD_ENV];
 
 test("autoSelect defaults to false so installs never hijack the session model", () => {
 	assert.equal(DEFAULTS.autoSelect, false);
@@ -40,10 +45,17 @@ function createMockPI(): MockPI {
 	return { pi, events, calls };
 }
 
-function createContext(model?: { provider: string; id: string }): ExtensionContext {
+function createContext(
+	model?: { provider: string; id: string },
+	parentSession?: string,
+): ExtensionContext {
 	return {
 		model,
-		sessionManager: { getSessionId: () => "s1" },
+		sessionManager: {
+			getSessionId: () => "s1",
+			// A session created by another session carries a parentSession header (#95).
+			getHeader: () => (parentSession ? { parentSession } : {}),
+		},
 		modelRegistry: {
 			find: (provider: string, id: string) => {
 				if (provider === "cuttle" && id === "auto") {
@@ -170,4 +182,83 @@ test("session_start respects an explicit --model flag even when autoSelect is tr
 		},
 	);
 	process.argv = originalArgv;
+});
+
+test("session_start does not claim a subagent child's launch model", async () => {
+	const original = process.env[SUBAGENT_CHILD_ENV];
+	process.env[SUBAGENT_CHILD_ENV] = "1";
+	try {
+		await withTempConfig(
+			{
+				autoSelect: true,
+				local: { preload: false, pinClassifier: false },
+				catalog: { local: ["lmstudio/local-model"], cloud: ["cloud/big-model"] },
+			},
+			async () => {
+				const { pi, events, calls } = createMockPI();
+				modelRouter(pi);
+				const handler = (events["session_start"] ?? [])[0];
+				assert.ok(handler);
+				await handler({}, createContext({ provider: "opencode-go", id: "gpt-6-luna" }));
+				assert.equal(
+					calls.setModel.length,
+					0,
+					"setModel must not claim a subagent child's launch model",
+				);
+			},
+		);
+	} finally {
+		if (original === undefined) delete process.env[SUBAGENT_CHILD_ENV];
+		else process.env[SUBAGENT_CHILD_ENV] = original;
+	}
+});
+
+test("session_start does not claim a session that has a parent (fork or foreground child)", async () => {
+	await withTempConfig(
+		{
+			autoSelect: true,
+			local: { preload: false, pinClassifier: false },
+			catalog: { local: ["lmstudio/local-model"], cloud: ["cloud/big-model"] },
+		},
+		async () => {
+			const { pi, events, calls } = createMockPI();
+			modelRouter(pi);
+			const handler = (events["session_start"] ?? [])[0];
+			assert.ok(handler);
+			await handler(
+				{},
+				createContext({ provider: "opencode-go", id: "gpt-6-luna" }, "/parent/session.jsonl"),
+			);
+			assert.equal(calls.setModel.length, 0, "setModel must not override a session that has a parent");
+		},
+	);
+});
+
+test("a subagent child launched on cuttle/auto is left to route through its message hooks", async () => {
+	const original = process.env[SUBAGENT_CHILD_ENV];
+	process.env[SUBAGENT_CHILD_ENV] = "1";
+	try {
+		await withTempConfig(
+			{
+				autoSelect: true,
+				local: { preload: false, pinClassifier: false },
+				catalog: { local: ["lmstudio/local-model"], cloud: ["cloud/big-model"] },
+			},
+			async () => {
+				const { pi, events, calls } = createMockPI();
+				modelRouter(pi);
+				const handler = (events["session_start"] ?? [])[0];
+				assert.ok(handler);
+				await handler({}, createContext({ provider: "cuttle", id: "auto" }));
+				assert.equal(
+					calls.setModel.length,
+					0,
+					"an already-virtual child selection must be left alone",
+				);
+			},
+		);
+	} finally {
+		if (original === undefined) delete process.env[SUBAGENT_CHILD_ENV];
+		else process.env[SUBAGENT_CHILD_ENV] = original;
+	}
 });
