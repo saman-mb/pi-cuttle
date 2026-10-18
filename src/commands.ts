@@ -222,7 +222,8 @@ export function buildStatusLines(input: {
 		`models:   local=${rt.config.catalog.local.join(", ") || "(none)"}`,
 		`          cloud=${rt.config.catalog.cloud.join(", ") || "(none)"}`,
 		`decision: ${rt.config.classifier.model ?? "heuristic only"} (fallback ${rt.config.classifier.fallback})`,
-		`stateChars: ${effectiveChars} (configured ${rt.config.classifier.stateChars})`,
+		`context:  ${rt.config.classifier.contextSource} (budget ${rt.config.classifier.contextBudget}, window ${rt.config.classifier.conversationWindow})${rt.config.classifier.contextShadow ? ", shadow compare on" : ""}`,
+		`stateChars: ${effectiveChars} (configured ${rt.config.classifier.stateChars}${rt.config.classifier.contextSource === "last-message" ? "" : " — inactive: contextSource is not last-message"})`,
 		`policy:   ${rt.config.policy.mode} (threshold ${rt.config.policy.threshold}, reclassify ${rt.config.policy.reclassify})`,
 		`routing:  ${rt.config.autoSelect ? "enabled" : "disabled"}`,
 		`local:    ${governor.slots.length}/${governor.localMax} slots used`,
@@ -242,24 +243,36 @@ async function status(rt: RouterRuntime, loaded: LoadedConfig, ctx: ExtensionCom
 	ctx.ui.notify(lines.join("\n"), "info");
 }
 
-async function why(rt: RouterRuntime, ctx: ExtensionCommandContext): Promise<void> {
-	const decision = rt.lastDecision;
-	if (!decision) {
-		ctx.ui.notify("cuttle: no routing decision yet in this session", "info");
-		return;
-	}
-	const age = Math.round((Date.now() - decision.at) / 1000);
-	const lines = [
+/**
+ * Render `/cuttle why` from a stored decision (#108).
+ *
+ * Pure so the output can be tested without a terminal. `signal` names what the classifier was
+ * actually shown — not merely what the config asks for — so a pinned or heuristic decision reads
+ * honestly instead of implying the classifier ran.
+ */
+export function buildWhyLines(decision: NonNullable<RouterRuntime["lastDecision"]>, now = Date.now()): string[] {
+	const age = Math.round((now - decision.at) / 1000);
+	const signal = decision.signalPath ?? (decision.source === "classifier" ? "unknown" : `none (${decision.source})`);
+	return [
 		`last decision: ${age}s ago`,
 		`flavor:     ${decision.flavor}`,
 		`tier:       ${decision.tier}`,
 		`model:      ${decision.ref}`,
 		`thinking:   ${decision.thinkingLevel}`,
 		`source:     ${decision.source}${decision.score !== undefined ? ` (score ${decision.score.toFixed(2)})` : ""}`,
+		`signal:     ${signal}`,
 		`subagent:   ${decision.subagent ? "yes" : "no"}`,
 		`reason:     ${decision.reason}`,
 	];
-	ctx.ui.notify(lines.join("\n"), "info");
+}
+
+async function why(rt: RouterRuntime, ctx: ExtensionCommandContext): Promise<void> {
+	const decision = rt.lastDecision;
+	if (!decision) {
+		ctx.ui.notify("cuttle: no routing decision yet in this session", "info");
+		return;
+	}
+	ctx.ui.notify(buildWhyLines(decision).join("\n"), "info");
 }
 
 async function exportMisroutes(rt: RouterRuntime, ctx: ExtensionCommandContext, daysArg?: string): Promise<void> {
