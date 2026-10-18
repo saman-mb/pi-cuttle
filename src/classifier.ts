@@ -10,6 +10,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ClassifierQuestion, Message } from "@earendil-works/pi-ai";
 
+import { isSubagent } from "./subagent.ts";
 import type {
 	ChoiceGateConfig,
 	Decision,
@@ -337,16 +338,24 @@ export function applyPolicy(
 	decision: Decision,
 	phase: "planning" | "implementation",
 ): Decision {
-	if (config.policy.mode === "phase") {
-		const tier: Tier = config.policy.phase[phase === "planning" ? "plan" : "implement"];
+	// Apply subagent policy override if running in a subagent.
+	const effectivePolicy = isSubagent() && config.policy.subagent ? { ...config.policy, ...config.policy.subagent } : config.policy;
+	const effectiveThreshold = effectivePolicy.threshold ?? config.policy.threshold;
+	const localBias = effectivePolicy.localBias ?? 0;
+	const adjustedThreshold = Math.min(1, effectiveThreshold + localBias);
+
+	if (effectivePolicy.mode === "phase") {
+		const tier: Tier = effectivePolicy.phase[phase === "planning" ? "plan" : "implement"];
 		return { tier, score: decision.score, source: decision.source, reason: `phase ${phase} -> ${tier}` };
 	}
-	if (config.policy.mode === "cost") {
-		const bar = Math.max(config.policy.threshold, 0.75);
+	if (effectivePolicy.mode === "cost") {
+		const bar = Math.max(adjustedThreshold, 0.75);
 		const tier: Tier = (decision.score ?? 0) >= bar ? "cloud" : "local";
 		return { tier, score: decision.score, source: decision.source, reason: `cost bar ${bar} (${decision.reason})` };
 	}
-	return decision;
+	// complexity mode: apply localBias to threshold
+	const tier: Tier = (decision.score ?? 0) >= adjustedThreshold ? "cloud" : "local";
+	return { tier, score: decision.score, source: decision.source, reason: `complexity bar ${adjustedThreshold} (${decision.reason})` };
 }
 
 export { binding };

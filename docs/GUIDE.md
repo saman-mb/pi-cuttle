@@ -115,6 +115,8 @@ pi install npm:pi-cuttle
   numbers.
 - **`/cuttle shadow-report [days]`** — agreement statistics for any enabled Phase-2
   gates.
+- **`/cuttle why`** — the last routing decision: flavor, tier, model, thinking level,
+  classifier score, whether it ran in a subagent, and the reason string.
 - **`PI_CUTTLE_DEBUG=/path/to/file`** — every routing decision and every classifier
   failure, one line each. This is the only turn-level record that the classifier
   fell back to the heuristic.
@@ -147,5 +149,72 @@ route result tier=cloud ref=opencode-go/deepseek-v4.1-flash reasons=classifier p
   first user turn classifies once and the decision sticks for the session. A
   failure-driven escalation or a struggle trigger flips it back to local; a
   failure-driven step-down re-decides on the very next user turn.
+
+## New in 0.5.0
+
+### Subagent-aware routing
+
+Background subagents (which set `PI_SUBAGENT_CHILD=1`) automatically get a separate
+policy from the main session. Configure it under `policy.subagent`:
+
+```json
+"policy": {
+  "mode": "complexity",
+  "threshold": 0.5,
+  "subagent": { "mode": "cost", "threshold": 0.5 }
+}
+```
+
+The main agent keeps a balanced policy; subagents use a cheaper, local-biased one.
+
+### Adaptive thinking levels
+
+Map classifier complexity scores to thinking/reasoning levels. The user's `/thinking`
+selection acts as a ceiling by default — the router may reduce it for simple tasks
+but never exceed it. Disable the ceiling with `enforceUserCeiling: false` when you
+want subagents to use the full mapped level.
+
+```json
+"thinkingLevels": {
+  "enabled": true,
+  "map": [
+    { "score": 0.2, "level": "off" },
+    { "score": 0.4, "level": "low" },
+    { "score": 0.6, "level": "medium" }
+  ],
+  "default": "high",
+  "enforceUserCeiling": true
+}
+```
+
+The clamped level is stored in router state and reused for continuations.
+
+### New virtual model flavors
+
+| Flavor | Behavior |
+|---|---|
+| `cuttle/big-local` | Always local, **largest** model first. For orchestration work. |
+| `cuttle/orchestrator` | Quality-first. Lower effective cloud threshold for planning/delegation. |
+
+### Local bias
+
+`policy.localBias` (0–0.5) adds to the cloud threshold, making the router prefer
+local more strongly without switching to `cost` mode.
+
+### Recommended subagent role mapping
+
+```json
+{
+  "subagents": {
+    "agentOverrides": {
+      "architect": { "model": "cuttle/orchestrator" },
+      "worker": { "model": "cuttle/big-local" },
+      "scout": { "model": "cuttle/fast-local" },
+      "oracle": { "model": "cuttle/cloud" },
+      "reviewer": { "model": "cuttle/local" }
+    }
+  }
+}
+```
 - No silent fallback. Classifier failures are visible in the decision reason, the
   debug log, and `/cuttle status`.

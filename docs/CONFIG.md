@@ -98,6 +98,10 @@ Use this when context window is a poor proxy for ability — for example, a 32k-
 |---|---|---|---|
 | `mode` | `"complexity"` \| `"phase"` \| `"cost"` | `"complexity"` | How the tier is chosen. |
 | `threshold` | number 0–1 | `0.5` | Complexity at or above this routes cloud. |
+| `reclassify` | `"session"` \| `"turn"` | `"session"` | When to re-evaluate the routing decision. |
+| `localBias` | number 0–0.5 | `0` | Added to the cloud threshold to bias toward local. Higher = more local. |
+| `subagent` | `SubagentPolicy` | unset | Policy override when running in a subagent (see below). |
+| `thinkingLevels` | `ThinkingLevelsPolicy` | unset | Adaptive thinking-level mapping based on complexity score (see below). |
 | `phase.plan` / `phase.implement` | `"local"` \| `"cloud"` | `cloud` / `local` | Tier per phase when `mode: "phase"`. |
 | `reclassify` | `"session"` \| `"turn"` | `"session"` | `session` classifies once and stays; `turn` re-classifies each user turn. |
 | `escalate.enabled` | boolean | `true` | Allow a local session to escalate to cloud on evidence of struggle. |
@@ -112,6 +116,97 @@ outgrew it. The router watches the conversation it already receives — tool res
 the evidence says so. Coming back down takes `cleanTurns` consecutive clean user turns, so
 it does not oscillate. A failure-driven escalation (#37) instead re-decides on the very
 next user turn, because the cause was the environment, not the work.
+
+### Subagent policy override (`subagent`)
+
+When `cuttle/auto` runs inside a pi-subagents child process, it automatically applies
+the `subagent` policy override. Background subagents set `PI_SUBAGENT_CHILD=1` in their
+environment; the main agent does not.
+
+```json
+"policy": {
+  "mode": "complexity",
+  "threshold": 0.5,
+  "subagent": {
+    "mode": "cost",
+    "threshold": 0.5
+  }
+}
+```
+
+This lets you keep a balanced policy for the main agent while subagents use a cheaper,
+local-biased policy. Foreground subagents run inside the parent Pi process and do not
+reload ambient extensions, so they use the parent's policy.
+
+### Local bias (`localBias`)
+
+A number 0–0.5 added to the cloud threshold. Higher values make the router prefer local
+more strongly. With `localBias: 0.2` and `threshold: 0.5`, the effective cloud bar is 0.7.
+
+```json
+"policy": {
+  "mode": "complexity",
+  "threshold": 0.5,
+  "localBias": 0.2
+}
+```
+
+This is a softer knob than switching to `cost` mode, which raises the bar to `max(threshold, 0.75)`.
+
+### Adaptive thinking levels (`thinkingLevels`)
+
+Maps classifier complexity scores to thinking/reasoning levels. The user's `/thinking`
+selection acts as a ceiling — the router may reduce it, never raise it.
+
+```json
+"thinkingLevels": {
+  "enabled": true,
+  "map": [
+    { "score": 0.15, "level": "off" },
+    { "score": 0.35, "level": "minimal" },
+    { "score": 0.55, "level": "low" },
+    { "score": 0.75, "level": "medium" }
+  ],
+  "default": "high",
+  "contextThreshold": 0.7
+}
+```
+
+- `map`: Sorted score thresholds. The first threshold whose `score` exceeds the classifier
+  score wins.
+- `default`: Level used when score is above all thresholds.
+- `contextThreshold` (optional): When context usage exceeds this fraction of the model's
+  window, drop thinking by one step to leave room for the answer.
+
+The clamped level is stored in router state and reused for continuations, so a session
+does not flip levels mid-turn.
+
+### Virtual model flavors
+
+| Flavor | Behavior |
+|---|---|
+| `cuttle/auto` | Classifier decides local vs cloud. Main agent default. |
+| `cuttle/local` | Always local, smallest model that fits. |
+| `cuttle/big-local` | Always local, **largest** model that fits. For orchestration work. |
+| `cuttle/orchestrator` | Quality-first. Uses a lower effective cloud threshold so planning/delegation leans toward larger models. |
+| `cuttle/fast-local` | Always local, fastest/smallest model. |
+| `cuttle/cloud` | Always cloud. |
+
+### Recommended subagent role mapping
+
+```json
+{
+  "subagents": {
+    "agentOverrides": {
+      "architect": { "model": "cuttle/orchestrator" },
+      "worker": { "model": "cuttle/big-local" },
+      "scout": { "model": "cuttle/fast-local" },
+      "oracle": { "model": "cuttle/cloud" },
+      "reviewer": { "model": "cuttle/local" }
+    }
+  }
+}
+```
 
 ## `local`
 

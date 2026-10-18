@@ -18,7 +18,7 @@ export const VIRTUAL_PROVIDER = "cuttle";
 export type Tier = "local" | "cloud";
 
 /** Which of the registered virtual models is being selected. */
-export type RouterFlavor = "auto" | "local" | "cloud" | "fast-local";
+export type RouterFlavor = "auto" | "local" | "cloud" | "fast-local" | "big-local" | "orchestrator";
 
 export interface ClassifierConfig {
 	/** `provider/model` of the decision model. Discovered from pi's model registry. */
@@ -55,6 +55,35 @@ export interface EscalationConfig {
 	cleanTurns: number;
 }
 
+/** pi's thinking ladder, ascending. `off` is handled separately. */
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+export type ModelThinkingLevel = typeof THINKING_LEVELS[number];
+
+/** Map a complexity score to a target thinking level. */
+export interface ThinkingLevelMapping {
+	score: number;
+	level: ModelThinkingLevel;
+}
+
+/** Policy for adaptive thinking levels. */
+export interface ThinkingLevelsPolicy {
+	enabled: boolean;
+	map: ThinkingLevelMapping[];
+	default: ModelThinkingLevel;
+	contextThreshold?: number;
+	/** When true (default), the user's `/thinking` selection caps the mapped level. When false, the router uses the full mapped level. */
+	enforceUserCeiling?: boolean;
+}
+
+/** Subagent-specific policy override. */
+export interface SubagentPolicy {
+	mode?: PolicyMode;
+	threshold?: number;
+	localBias?: number;
+	thinkingLevels?: ThinkingLevelsPolicy;
+}
+
 export interface PolicyConfig {
 	mode: PolicyMode;
 	/** Complexity below this routes local. Used when `mode` is `complexity`. */
@@ -65,6 +94,12 @@ export interface PolicyConfig {
 	reclassify: "session" | "turn";
 	/** Struggle-based escalation (#41). */
 	escalate: EscalationConfig;
+	/** Optional subagent policy override. Applied when running in a subagent (#69). */
+	subagent?: SubagentPolicy;
+	/** Optional adaptive thinking-level policy (#69). */
+	thinkingLevels?: ThinkingLevelsPolicy;
+	/** Bias toward local: added to the cloud threshold. Higher = more local. */
+	localBias?: number;
 }
 
 export interface LocalConfig {
@@ -172,6 +207,8 @@ export interface RouterState {
 	escalatedFrom?: Tier;
 	/** Consecutive clean user turns since an escalation (#41). */
 	cleanTurns?: number;
+	/** The clamped thinking level for this session. Continuations keep it (#69). */
+	thinkingLevel?: ModelThinkingLevel;
 	decision: {
 		source: "classifier" | "heuristic" | "pin";
 		score?: number;

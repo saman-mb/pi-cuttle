@@ -15,11 +15,18 @@
  *   - #26: extension flags are only readable after the factory returns, so the forced tier
  *          is read lazily via `rt.getForced`.
  */
-import type { Message } from "@earendil-works/pi-ai";
+import type { Message, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ModelRoute, ModelRouteRequest } from "@earendil-works/pi-coding-agent";
 
 import { applyPolicy, decideTier, detectPhase, gatesActive, splitRef, struggleSignals } from "./classifier.ts";
 import { appendShadow } from "./shadow.ts";
+import { isSubagent } from "./subagent.ts";
+import {
+	applyContextPressure,
+	applyUserCeiling,
+	clampToSupportedLevel,
+	scoreToThinkingLevel,
+} from "./thinking-levels.ts";
 import type { LocalGovernor } from "./governor.ts";
 import type { ClassifierFailure, Reservation, RouterConfig, RouterFlavor, RouterState, Tier } from "./types.ts";
 import { VIRTUAL_PROVIDER } from "./types.ts";
@@ -37,6 +44,18 @@ export interface RouterRuntime {
 	log?: (message: string) => void;
 	/** Most recent classifier failure, for `/cuttle status` (#53). */
 	lastClassifierError?: ClassifierFailure;
+	/** Most recent routing decision, for `/cuttle why`. */
+	lastDecision?: {
+		flavor: RouterFlavor;
+		tier: Tier;
+		ref: string;
+		thinkingLevel: string;
+		reason: string;
+		source: string;
+		score?: number;
+		subagent: boolean;
+		at: number;
+	};
 	/** Consecutive classifier failures in this process. */
 	classifierFailures: number;
 	/** Unix ms after which the classifier can be tried again. */
@@ -102,6 +121,14 @@ export function localCandidates(config: RouterConfig, ctx: ExtensionContext, fla
 			if (ca === cb) return 0;
 			return ca - cb;
 		});
+	} else if (flavor === "big-local") {
+		// Largest model first — for orchestration work that benefits from capacity.
+		list.sort((a, b) => {
+			const ca = caps?.[a] ?? 0;
+			const cb = caps?.[b] ?? 0;
+			if (ca === cb) return 0;
+			return cb - ca;
+		});
 	} else if (score > 0 && list.length > 1) {
 		list.sort((a, b) => {
 			const ca = capacityScore(ctx, a, list, caps);
@@ -145,7 +172,7 @@ export function firstResolvable(ctx: ExtensionContext, candidates: readonly stri
 }
 
 function flavorBias(flavor: RouterFlavor): Tier | undefined {
-	if (flavor === "local" || flavor === "fast-local") return "local";
+	if (flavor === "local" || flavor === "fast-local" || flavor === "big-local" || flavor === "orchestrator") return "local";
 	if (flavor === "cloud") return "cloud";
 	return undefined;
 }
@@ -231,8 +258,14 @@ export async function routeRequest(
 ): Promise<ModelRoute<RouterState>> {
 	const sessionId = ctx.sessionManager.getSessionId();
 	const state = request.state;
-	const thinking = request.thinkingLevel;
 	const phase = state?.phase ?? detectPhase(request.messages) ?? "planning";
+
+	// Compute effective thinking level. If state has a clamped level from a prior turn,
+	// reuse it for continuity; otherwise compute fresh from the user's selection.
+	let effectiveThinking: ModelThinkingLevel = request.thinkingLevel ?? "medium";
+	if (state?.thinkingLevel) {
+		effectiveThinking = state.thinkingLevel;
+	}
 
 	// Requests outside the agent loop (e.g. compaction summaries) use the deterministic tier.
 	if (request.reason === "direct") {
@@ -240,7 +273,7 @@ export async function routeRequest(
 		const ref = tier === "local" ? pickLocal(rt.config, ctx, flavor) : pickCloud(rt.config, ctx);
 		const next: RouterState =
 			state ?? { tier, modelId: ref ?? "", phase, decision: { source: "pin", reason: "direct request" } };
-		return resolveModel(ctx, ref, thinking, next);
+		return resolveModel(ctx, ref, effectiveThinking, next);
 	}
 
 	// #11: a retry may switch models. Local failures and overflow-style errors go to cloud.
@@ -256,12 +289,12 @@ export async function routeRequest(
 				decision: { source: "heuristic", reason: `retry: ${failed.model.provider} failure, switched to cloud` },
 				degradedFrom: "local",
 			};
-			return resolveModel(ctx, cloudRef, thinking, next);
+			return resolveModel(ctx, cloudRef, effectiveThinking, next);
 		}
 		const sameRef = `${failed.model.provider}/${failed.model.id}`;
 		const next: RouterState =
 			state ?? { tier: "cloud", modelId: sameRef, phase, decision: { source: "heuristic", reason: "retry on same model" } };
-		return resolveModel(ctx, sameRef, thinking, next);
+		return resolveModel(ctx, sameRef, effectiveThinking, next);
 	}
 
 	// #37: a session degraded by a local failure re-decides on the next user turn.
@@ -294,7 +327,7 @@ export async function routeRequest(
 					escalatedFrom: "local",
 					cleanTurns: 0,
 				};
-				return resolveModel(ctx, cloudRef, thinking, next);
+				return resolveModel(ctx, cloudRef, effectiveThinking, next);
 			}
 		}
 
@@ -302,7 +335,7 @@ export async function routeRequest(
 			const nextClean = signals.errors === 0 ? cleanStreak : 0;
 			if (nextClean !== (state.cleanTurns ?? 0)) {
 				const next: RouterState = { ...state, cleanTurns: nextClean };
-				return resolveModel(ctx, firstResolvable(ctx, cloudCandidates(rt.config, ctx)), thinking, next);
+				return resolveModel(ctx, firstResolvable(ctx, cloudCandidates(rt.config, ctx)), effectiveThinking, next);
 			}
 		}
 
@@ -333,9 +366,10 @@ export async function routeRequest(
 					modelId: ref ?? "",
 					phase: detected,
 					decision: { ...state.decision, reason },
+					...(state.thinkingLevel ? { thinkingLevel: state.thinkingLevel } : {}),
 				};
 				try {
-					return resolveModel(ctx, ref, thinking, next);
+					return resolveModel(ctx, ref, effectiveThinking, next);
 				} catch (error) {
 					if (held) rt.governor.release(held);
 					throw error;
@@ -373,9 +407,9 @@ export async function routeRequest(
 		const next: RouterState =
 			effectiveTier === state.tier
 				? state
-				: { ...state, tier: effectiveTier, modelId: ref, decision: { ...state.decision, reason: `${state.decision.reason}; ${reasonSuffix}` } };
+				: { ...state, tier: effectiveTier, modelId: ref, ...(state.thinkingLevel ? { thinkingLevel: state.thinkingLevel } : {}), decision: { ...state.decision, reason: `${state.decision.reason}; ${reasonSuffix}` } };
 		try {
-			return resolveModel(ctx, ref, thinking, next);
+			return resolveModel(ctx, ref, effectiveThinking, next);
 		} catch (error) {
 			if (held) rt.governor.release(held);
 			throw error;
@@ -444,7 +478,32 @@ export async function routeRequest(
 		}
 	}
 	if (!ref) throw new Error("pi-cuttle: no configured model resolves (check catalog.local/cloud)");
-	rt.log?.(`route result tier=${tier} ref=${ref} reasons=${reasons.join("; ")}`);
+
+	// Compute clamped thinking level based on classifier score (#69).
+	const thinkingLevelsPolicy = rt.config.policy.thinkingLevels;
+	if (thinkingLevelsPolicy?.enabled && decision.score !== undefined) {
+		const targetLevel = scoreToThinkingLevel(decision.score, thinkingLevelsPolicy);
+		const parsed = splitRef(ref);
+		if (parsed) {
+			const model = ctx.modelRegistry.find(parsed.provider, parsed.id);
+			if (model) {
+				const clamped = clampToSupportedLevel(targetLevel, model);
+				const respectCeiling = thinkingLevelsPolicy.enforceUserCeiling !== false;
+				const withCeiling = respectCeiling ? applyUserCeiling(clamped, request.thinkingLevel ?? "medium") : clamped;
+				const usage = ctx.getContextUsage();
+				const withPressure = applyContextPressure(
+					withCeiling,
+					usage?.tokens ?? null,
+					model.contextWindow,
+					thinkingLevelsPolicy.contextThreshold,
+				);
+				effectiveThinking = withPressure;
+				rt.log?.(`thinking clamped: score=${decision.score.toFixed(2)} target=${targetLevel} clamped=${clamped}${respectCeiling ? ` ceiling=${request.thinkingLevel ?? "medium"}` : " (ceiling off)"} final=${withPressure}`);
+			}
+		}
+	}
+
+	rt.log?.(`route result tier=${tier} ref=${ref} thinking=${effectiveThinking} reasons=${reasons.join("; ")}`);
 	if (gatesActive(rt.config.gates)) {
 		appendShadow({ at: Date.now(), flavor, tier, source: decision.source, gates: decision.gates, reason: reasons.join("; ") });
 	}
@@ -452,10 +511,25 @@ export async function routeRequest(
 		tier,
 		modelId: ref ?? "",
 		phase,
+		...(effectiveThinking ? { thinkingLevel: effectiveThinking } : {}),
 		decision: { source: decision.source, ...(decision.score !== undefined ? { score: decision.score } : {}), reason: reasons.join("; ") },
 	};
+
+	// Store the routing decision for `/cuttle why`.
+	rt.lastDecision = {
+		flavor,
+		tier,
+		ref,
+		thinkingLevel: effectiveThinking,
+		reason: reasons.join("; "),
+		source: decision.source,
+		score: decision.score,
+		subagent: isSubagent(),
+		at: Date.now(),
+	};
+
 	try {
-		return resolveModel(ctx, ref, thinking, next);
+		return resolveModel(ctx, ref, effectiveThinking, next);
 	} catch (error) {
 		if (held) rt.governor.release(held);
 		throw error;
@@ -469,6 +543,8 @@ const FLAVORS: { id: RouterFlavor; name: string }[] = [
 	{ id: "local", name: "Local preferred" },
 	{ id: "cloud", name: "Cloud only" },
 	{ id: "fast-local", name: "Fast local" },
+	{ id: "big-local", name: "Big local" },
+	{ id: "orchestrator", name: "Orchestrator" },
 ];
 
 export function registerVirtualModels(pi: ExtensionAPI, rt: RouterRuntime): void {

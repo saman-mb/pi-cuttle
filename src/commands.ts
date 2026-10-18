@@ -229,6 +229,26 @@ async function status(rt: RouterRuntime, loaded: LoadedConfig, ctx: ExtensionCom
 	ctx.ui.notify(lines.join("\n"), "info");
 }
 
+async function why(rt: RouterRuntime, ctx: ExtensionCommandContext): Promise<void> {
+	const decision = rt.lastDecision;
+	if (!decision) {
+		ctx.ui.notify("cuttle: no routing decision yet in this session", "info");
+		return;
+	}
+	const age = Math.round((Date.now() - decision.at) / 1000);
+	const lines = [
+		`last decision: ${age}s ago`,
+		`flavor:     ${decision.flavor}`,
+		`tier:       ${decision.tier}`,
+		`model:      ${decision.ref}`,
+		`thinking:   ${decision.thinkingLevel}`,
+		`source:     ${decision.source}${decision.score !== undefined ? ` (score ${decision.score.toFixed(2)})` : ""}`,
+		`subagent:   ${decision.subagent ? "yes" : "no"}`,
+		`reason:     ${decision.reason}`,
+	];
+	ctx.ui.notify(lines.join("\n"), "info");
+}
+
 export function registerCuttleCommand(pi: ExtensionAPI, rt: RouterRuntime, loaded: LoadedConfig, telemetry: TelemetryType): void {
 	pi.registerCommand("cuttle", {
 		description: "Toggle and inspect local/cloud model routing",
@@ -288,6 +308,7 @@ export function registerCuttleCommand(pi: ExtensionAPI, rt: RouterRuntime, loade
 			if (sub === "policy") return editPolicy(rt, ctx);
 			if (sub === "limit") return editLocalLimit(rt, ctx);
 			if (sub === "doctor") return doctor(rt, ctx);
+			if (sub === "why") return why(rt, ctx);
 			return status(rt, loaded, ctx);
 		},
 	});

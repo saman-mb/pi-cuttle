@@ -24,6 +24,16 @@ export const DEFAULTS: RouterConfig = {
 		phase: { plan: "cloud", implement: "local" },
 		reclassify: "session",
 		escalate: { enabled: true, toolErrors: 2, window: 8, cleanTurns: 3 },
+		thinkingLevels: {
+			enabled: false,
+			map: [
+				{ score: 0.15, level: "off" },
+				{ score: 0.35, level: "minimal" },
+				{ score: 0.55, level: "low" },
+				{ score: 0.75, level: "medium" },
+			],
+			default: "high",
+		},
 	},
 	local: {
 		maxConcurrent: 1,
@@ -65,7 +75,7 @@ function mergeSection<T extends object>(base: T, patch: unknown): T {
 	return { ...base, ...(patch as Partial<T>) };
 }
 
-/** Merge the `policy` section, keeping nested `phase` and `escalate` defaults. */
+/** Merge the `policy` section, keeping nested `phase`, `escalate`, `subagent`, and `thinkingLevels` defaults. */
 export function mergePolicy(base: RouterConfig["policy"], patch: unknown): RouterConfig["policy"] {
 	if (!isRecord(patch)) return base;
 	return {
@@ -73,6 +83,8 @@ export function mergePolicy(base: RouterConfig["policy"], patch: unknown): Route
 		...patch,
 		phase: isRecord(patch.phase) ? { ...base.phase, ...patch.phase } : base.phase,
 		escalate: isRecord(patch.escalate) ? { ...base.escalate, ...patch.escalate } : base.escalate,
+		subagent: isRecord(patch.subagent) ? { ...base.subagent, ...patch.subagent } : base.subagent,
+		thinkingLevels: isRecord(patch.thinkingLevels) ? { ...base.thinkingLevels, ...patch.thinkingLevels } : base.thinkingLevels,
 	} as RouterConfig["policy"];
 }
 
