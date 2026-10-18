@@ -149,6 +149,21 @@ the `misroute` tag in the LangFuse UI and export them via `npm run eval:export-m
 The two integrations coexist: the official plugin captures the full pi session,
 while pi-cuttle emits focused routing-decision traces.
 
+### Routing scores
+
+Every routing decision is also scored. Scores are computed in code from data already in the
+trace and ingested by `POST /api/public/scores` against the trace id — no SDK, and no model call.
+They are **observational, not a gate**: a score can never fail a turn or block a change.
+
+| Score | Type | Rule |
+| --- | --- | --- |
+| `flavor_compliance` | boolean | Emitted for `local`, `fast-local` and `big-local`. `false` when the serving model is not in `catalog.local`. The tripwire for a local-only flavor served by a cloud model. |
+| `routed` | boolean | Emitted on the child-bypass path with value `false`: a child session that inherited a non-router model and so never entered the router. |
+
+A `flavor_compliance` of `false` is picked up by `npm run eval:export-misroutes` and appended to
+`eval/misroutes.jsonl` as a fixture, the same way a trace tagged `misroute` is. That closes the
+loop: a leak seen in production becomes a regression test without anyone tagging it by hand.
+
 ## Troubleshooting
 
 ### Container won't start

@@ -3,6 +3,15 @@
 All notable changes to this project. Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Routing scores.** Production routing decisions are now scored in Langfuse: `flavor_compliance`
+  flags a local-only flavor served by a cloud model, and `routed` flags a child session that never
+  entered the router. Scores are computed in code and observational — they cannot fail a turn. A
+  failing `flavor_compliance` becomes an eval fixture via `eval:export-misroutes`.
+
 ## [0.6.0] — 2026-10-18
 
 ### Added
