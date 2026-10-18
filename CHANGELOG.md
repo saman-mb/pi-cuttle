@@ -26,6 +26,14 @@ versions follow [SemVer](https://semver.org/).
 
 - **`/cuttle config` docs corrected**: a config change applies from the next routing decision — a
   new session, or the next user turn when `policy.reclassify` is `"turn"` — not "the next turn".
+- **`docs/PRODUCT-IMPACT.md` rewritten against the code it documents** (#71). The draft advertised
+  two capabilities that do not exist — a per-session `sessionCloudBudget` and a preference for
+  models already resident in memory, which the "Governor gap" section of the README has always
+  denied — and described `policy.subagent` and `policy.thinkingLevels` as automatic when both
+  default off. Each capability now states whether it ships on by default, is opt-in, or is absent,
+  and the recommended `architect` flavour no longer points at `cuttle/orchestrator` while that
+  flavour is forced local (#122). The doc is now linked from the README, and `test/docs.test.ts`
+  pins the corrections so they cannot drift back.
 
 ## [0.5.1] — 2026-10-18
 

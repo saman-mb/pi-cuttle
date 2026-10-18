@@ -221,7 +221,7 @@ Phase 1 verification (llama.cpp router classifier + MTPLX local):
 - A decision with a >10k-character state, still classifier-sourced.
 - A coding turn routed to `mtplx/...` and completed.
 
-See `docs/ARCHITECTURE.md` for design invariants, `docs/CONFIG.md` for all options, `docs/EVAL.md` for the eval pipeline guide, and `docs/EVAL-IMPACT.md` for what the pipeline gives you as a developer and product owner.
+See `docs/ARCHITECTURE.md` for design invariants, `docs/CONFIG.md` for all options, `docs/EVAL.md` for the eval pipeline guide, and `docs/EVAL-IMPACT.md` for what the pipeline gives you as a developer and product owner. `docs/PRODUCT-IMPACT.md` states, in plain language, which routing capabilities are on by default and which you have to switch on yourself.
 
 ---
 
