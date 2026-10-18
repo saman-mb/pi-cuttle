@@ -152,6 +152,13 @@ route result tier=cloud ref=opencode-go/deepseek-v4.1-flash reasons=classifier p
 
 ## New in 0.5.0
 
+### Interactive config panel
+
+Run `/cuttle config` for a single searchable panel showing classifier, catalogs, policy,
+and max concurrent settings. In TUI mode it's fully interactive; in non-TUI modes it shows
+a text view with all values and which file to edit. Changes write immediately to the user
+config file and take effect from the next turn.
+
 ### Subagent-aware routing
 
 Background subagents (which set `PI_SUBAGENT_CHILD=1`) automatically get a separate

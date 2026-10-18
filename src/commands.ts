@@ -6,7 +6,19 @@
  */
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
-import { isRecord, mergePolicy, saveUserConfig, type LoadedConfig } from "./config.ts";
+import { isRecord, loadProjectConfig, mergePolicy, saveUserConfig, type LoadedConfig } from "./config.ts";
+import {
+	buildNonTuiText,
+	buildPanelRows,
+	checkCatalogRefs,
+	checkClassifier,
+	CLASSIFIER_UNSET_SENTINEL,
+	classifierPatchForSelection,
+	configPathsForPanel,
+	shadowedSections,
+	STATE,
+	validateMaxConcurrent,
+} from "./config-ui.ts";
 import { LangFuseClient } from "./langfuse.ts";
 import { splitRef } from "./classifier.ts";
 import { formatStats, Telemetry } from "./telemetry.ts";
@@ -308,6 +320,207 @@ async function exportMisroutes(rt: RouterRuntime, ctx: ExtensionCommandContext, 
 	}
 }
 
+export async function showConfigPanel(rt: RouterRuntime, ctx: ExtensionCommandContext, loaded: LoadedConfig): Promise<void> {
+	const cwd = process.cwd();
+	const paths = configPathsForPanel(cwd);
+	const projectInfo = loadProjectConfig(cwd);
+	const shadowed = shadowedSections(projectInfo.raw);
+
+	// Check classifier against the classifier registry
+	const classifierCheck = checkClassifier(
+		rt.config.classifier.model,
+		(provider, id) => ctx.modelRegistry.findOfType("classifier", provider, id),
+	);
+
+	// Check catalogs against the model registry
+	const localCatalogCheck = checkCatalogRefs(rt.config.catalog.local, (provider, id) =>
+		ctx.modelRegistry.find(provider, id),
+	);
+	const cloudCatalogCheck = checkCatalogRefs(rt.config.catalog.cloud, (provider, id) =>
+		ctx.modelRegistry.find(provider, id),
+	);
+
+	// Non-TUI fallback
+	if (ctx.mode !== "tui") {
+		const text = buildNonTuiText({
+			config: rt.config,
+			classifierCheck,
+			localCatalogCheck,
+			cloudCatalogCheck,
+			shadowed,
+			paths,
+		});
+		ctx.ui.notify(text, "info");
+		return;
+	}
+
+	// TUI mode — try to use SettingsList via ctx.ui.custom()
+	try {
+		const { SettingsList, SelectList } = await import("@earendil-works/pi-tui");
+		const { getSettingsListTheme, getSelectListTheme } = await import("@earendil-works/pi-coding-agent");
+		const theme = getSettingsListTheme();
+		const selectTheme = getSelectListTheme();
+
+		// Get available classifiers from the registry
+		const classifierModels = ctx.modelRegistry
+			.getModelsOfType("classifier")
+			.map((m) => `${m.provider}/${m.id}`);
+
+		const rows = buildPanelRows({
+			config: rt.config,
+			classifierCheck,
+			localCatalogCheck,
+			cloudCatalogCheck,
+			shadowed,
+			paths,
+			availableClassifiers: classifierModels,
+		});
+
+		let lastChangeValue: string = STATE.NO_CHANGES;
+
+		// Update the last-change row after a successful write
+		const updateLastChange = (value: string) => {
+			lastChangeValue = value;
+			// Find and update the row
+			const idx = rows.findIndex((r) => r.id === "last-change");
+			if (idx >= 0 && rows[idx]) {
+				rows[idx].currentValue = value;
+			}
+		};
+
+		// Overwrite a row's displayed value. SettingsList writes the raw selection into the row
+		// before calling onChange, so a sentinel selection must be replaced with real state.
+		const updateRowValue = (id: string, value: string) => {
+			const row = rows.find((r) => r.id === id);
+			if (row) row.currentValue = value;
+		};
+
+		// Add submenu for classifier row if not shadowed
+		if (!shadowed.includes("classifier")) {
+			const classifierRow = rows.find((r) => r.id === "classifier");
+			if (classifierRow) {
+				const options = [CLASSIFIER_UNSET_SENTINEL, ...classifierModels];
+				classifierRow.submenu = (currentValue, done) => {
+					const items = options.map((value) => ({
+						value,
+						label: value,
+						description: value === currentValue ? "(current)" : undefined,
+					}));
+					const list = new SelectList(items, 7, selectTheme);
+					list.onSelect = (item) => {
+						// Pass the literal selection. SettingsList skips onChange entirely when the submenu
+						// completes with `undefined` (it treats that as cancel), so "Unset" must travel as an
+						// explicit sentinel that the handler maps to `undefined` for the config write.
+						done(item.value);
+					};
+					list.onCancel = () => done(undefined);
+					return list;
+				};
+			}
+		}
+
+		// Add submenu for max-concurrent row if not shadowed
+		if (!shadowed.includes("local")) {
+			const maxConcurrentRow = rows.find((r) => r.id === "max-concurrent");
+			if (maxConcurrentRow) {
+				const options = [1, 2, 3, 4, 6, 8];
+				maxConcurrentRow.submenu = (currentValue, done) => {
+					const currentNum = Number(currentValue);
+					const items = options.map((value) => ({
+						value: String(value),
+						label: String(value),
+						description: value === currentNum ? "(current)" : undefined,
+					}));
+					const list = new SelectList(items, 7, selectTheme);
+					list.onSelect = (item) => done(item.value);
+					list.onCancel = () => done(undefined);
+					return list;
+				};
+			}
+		}
+
+		// `ctx.ui.custom()` resolves only when the component invokes the supplied `done`. SettingsList
+		// reports its cancel key through `onCancel` (settings-list.js `handleInput`), so capture
+		// `done` and forward it — without this the panel opens and can never be closed.
+		let closePanel: (() => void) | undefined;
+
+		const settingsList = new SettingsList(
+			rows,
+			7, // maxVisible — show all 7 rows
+			theme,
+			async (id: string, newValue: string) => {
+				// Handle changes based on row id
+				switch (id) {
+					case "classifier": {
+						const patch = classifierPatchForSelection(newValue);
+						const unset = patch.classifier.model === undefined;
+						const path = refresh(rt, patch);
+						if (unset) {
+							// The row now displays the sentinel; show the real post-write state instead.
+							updateRowValue("classifier", STATE.UNSET_HEURISTIC);
+						}
+						updateLastChange(STATE.SAVED);
+						ctx.ui.notify(
+							unset
+								? `cuttle: classifier unset\nwritten to ${path}`
+								: `cuttle: classifier -> ${newValue}\nwritten to ${path}`,
+							"info",
+						);
+						break;
+					}
+					case "policy": {
+						const path = refresh(rt, { policy: { mode: newValue as PolicyMode } });
+						updateLastChange(STATE.SAVED);
+						ctx.ui.notify(`cuttle: policy -> ${newValue}\nwritten to ${path}`, "info");
+						break;
+					}
+					case "max-concurrent": {
+						const validation = validateMaxConcurrent(newValue);
+						if (!validation.valid) {
+							ctx.ui.notify(`cuttle: ${validation.error}`, "warning");
+							return;
+						}
+						const path = refresh(rt, { local: { maxConcurrent: validation.value } });
+						updateLastChange(STATE.SAVED);
+						ctx.ui.notify(`cuttle: maxConcurrent -> ${validation.value}\nwritten to ${path}`, "info");
+						break;
+					}
+				}
+			},
+			() => closePanel?.(),
+			{ enableSearch: true },
+		);
+
+		const result = await ctx.ui.custom((_tui, _theme, _keybindings, done) => {
+			closePanel = () => done(undefined);
+			return settingsList;
+		});
+		if (result === undefined) {
+			// RPC mode or custom() not available — fall back to text
+			const text = buildNonTuiText({
+				config: rt.config,
+				classifierCheck,
+				localCatalogCheck,
+				cloudCatalogCheck,
+				shadowed,
+				paths,
+			});
+			ctx.ui.notify(text, "info");
+		}
+	} catch (error) {
+		// If SettingsList import fails, fall back to text
+		const text = buildNonTuiText({
+			config: rt.config,
+			classifierCheck,
+			localCatalogCheck,
+			cloudCatalogCheck,
+			shadowed,
+			paths,
+		});
+		ctx.ui.notify(`${text}\n(TUI component unavailable: ${error instanceof Error ? error.message : String(error)})`, "warning");
+	}
+}
+
 export function registerCuttleCommand(pi: ExtensionAPI, rt: RouterRuntime, loaded: LoadedConfig, telemetry: TelemetryType): void {
 	pi.registerCommand("cuttle", {
 		description: "Toggle and inspect local/cloud model routing",
@@ -369,6 +582,7 @@ export function registerCuttleCommand(pi: ExtensionAPI, rt: RouterRuntime, loade
 			if (sub === "doctor") return doctor(rt, ctx);
 			if (sub === "why") return why(rt, ctx);
 			if (sub === "export-misroutes") return exportMisroutes(rt, ctx, extra);
+			if (sub === "config") return showConfigPanel(rt, ctx, loaded);
 			return status(rt, loaded, ctx);
 		},
 	});

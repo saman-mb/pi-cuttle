@@ -202,3 +202,18 @@ export function saveUserConfig(patch: Record<string, unknown>): string {
 	writeFileSync(path, JSON.stringify(merged, null, 2) + "\n");
 	return path;
 }
+
+/**
+ * Load a project config file and return its raw parsed content.
+ * Used by the config panel to determine which sections are shadowed.
+ */
+export function loadProjectConfig(cwd: string): { raw: unknown; path: string; exists: boolean } {
+	const path = join(cwd, ".pi", "pi-cuttle.json");
+	if (!existsSync(path)) return { raw: undefined, path, exists: false };
+	try {
+		const raw = JSON.parse(readFileSync(path, "utf8"));
+		return { raw, path, exists: true };
+	} catch {
+		return { raw: undefined, path, exists: true };
+	}
+}

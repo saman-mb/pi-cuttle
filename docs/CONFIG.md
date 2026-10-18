@@ -12,6 +12,23 @@ Worked example: [`examples/pi-cuttle.example.json`](../examples/pi-cuttle.exampl
 > Legacy: an existing `~/.pi/agent/cuttle.json` and `~/.pi/agent/cuttle/` directory are
 > moved to the new `pi-cuttle` names automatically on first load.
 
+## Interactive config panel
+
+Run `/cuttle config` for a single searchable panel showing every knob with its current value:
+
+- **Classifier model** — pick from pi's registered classifiers or unset (heuristic)
+- **Local catalog** — read-only; use `/cuttle models` to change
+- **Cloud catalog** — read-only; use `/cuttle models` to change
+- **Policy mode** — cycle through complexity, cost, phase
+- **Local max concurrent** — pick from 1, 2, 3, 4, 6, 8
+
+In TUI mode the panel is interactive (Enter to select, Esc to cancel). In non-TUI modes
+(print, JSON, RPC) it falls back to a text view showing all values and which file to edit.
+
+Changes are written immediately to `~/.pi/agent/pi-cuttle.json` and take effect from the next
+user turn. Sections locked by a project config file (`.pi/pi-cuttle.json`) are shown as
+SHADOWED and cannot be changed via the panel.
+
 ## Model refs
 
 Every model ref is `provider/model` as pi's model registry understands it. The
