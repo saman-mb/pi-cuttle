@@ -57,6 +57,8 @@ export default function modelRouter(pi: ExtensionAPI): void {
 		pins: new Map(),
 		previousModels: new Map(),
 		sizes: new Map(),
+		classifierFailures: 0,
+		classifierBackoffUntil: 0,
 		log,
 		// #26: read lazily; the value is undefined inside the factory.
 		getForced: () => {

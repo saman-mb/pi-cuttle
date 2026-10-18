@@ -28,6 +28,10 @@ export interface ClassifierConfig {
 	timeoutMs: number;
 	/** Characters of the prompt handed to the classifier. */
 	stateChars: number;
+	/** Consecutive failures before the classifier is skipped for backoffMs. */
+	backoffAfterFailures: number;
+	/** Cooldown after the failure threshold is crossed. */
+	backoffMs: number;
 }
 
 export interface CatalogConfig {

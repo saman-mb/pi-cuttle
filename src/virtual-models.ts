@@ -39,6 +39,10 @@ export interface RouterRuntime {
 	log?: (message: string) => void;
 	/** Most recent classifier failure, for `/cuttle status` (#53). */
 	lastClassifierError?: ClassifierFailure;
+	/** Consecutive classifier failures in this process. */
+	classifierFailures: number;
+	/** Unix ms after which the classifier can be tried again. */
+	classifierBackoffUntil: number;
 }
 
 type RouterRequest = ModelRouteRequest<RouterState>;
@@ -377,11 +381,31 @@ export async function routeRequest(
 
 	const prompt = lastUserText(request.messages);
 	const forced = rt.getForced?.() ?? rt.pins.get(sessionId) ?? flavorBias(flavor);
-	const decided = await decideTier({ config: rt.config, prompt, messages: request.messages, ctx, log: rt.log, ...(forced ? { forced } : {}) });
+	const now = Date.now();
+	const skipClassifier =
+		rt.config.classifier.model !== undefined &&
+		rt.classifierFailures >= rt.config.classifier.backoffAfterFailures &&
+		now < rt.classifierBackoffUntil;
+	if (skipClassifier) rt.log?.("classifier: skipping due to backoff");
+	const decided = await decideTier({
+		config: rt.config,
+		prompt,
+		messages: request.messages,
+		ctx,
+		log: rt.log,
+		skipClassifier,
+		...(forced ? { forced } : {}),
+	});
 	if (decided.classifierFailure) {
 		rt.lastClassifierError = { ...decided.classifierFailure, turn: userTurn(request.messages), at: Date.now() };
+		rt.classifierFailures += 1;
+		if (rt.classifierFailures >= rt.config.classifier.backoffAfterFailures) {
+			rt.classifierBackoffUntil = now + rt.config.classifier.backoffMs;
+		}
 	} else if (decided.source === "classifier") {
 		rt.lastClassifierError = undefined;
+		rt.classifierFailures = 0;
+		rt.classifierBackoffUntil = 0;
 	}
 	const decision = applyPolicy(rt.config, decided, phase);
 

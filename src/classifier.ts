@@ -241,11 +241,17 @@ export async function decideTier(input: {
 	ctx: ExtensionContext;
 	messages?: readonly Message[];
 	forced?: Tier;
+	/** Skip the classifier and use the heuristic (e.g. during a backoff). */
+	skipClassifier?: boolean;
 	/** Optional router log sink; receives trim and failure lines. */
 	log?: (message: string) => void;
 }): Promise<Decision> {
-	const { config, prompt, ctx, messages, forced, log } = input;
+	const { config, prompt, ctx, messages, forced, skipClassifier, log } = input;
 	if (forced) return { tier: forced, score: 0, source: "pin", reason: `pinned ${forced}` };
+	if (skipClassifier) {
+		const h = heuristicDecision(config, prompt);
+		return { ...h, source: "heuristic", reason: `${h.reason} (classifier back off)` };
+	}
 	if (config.classifier.fallback === "heuristic" && !config.classifier.model) return heuristicDecision(config, prompt);
 
 	const ref = config.classifier.model;

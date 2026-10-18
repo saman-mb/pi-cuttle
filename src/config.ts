@@ -16,7 +16,7 @@ import type { RouterConfig } from "./types.ts";
 
 export const DEFAULTS: RouterConfig = {
 	autoSelect: false,
-	classifier: { fallback: "heuristic", timeoutMs: 4000, stateChars: 16_000 },
+	classifier: { fallback: "heuristic", timeoutMs: 4000, stateChars: 16_000, backoffAfterFailures: 3, backoffMs: 60_000 },
 	catalog: { local: [], cloud: [] },
 	policy: {
 		mode: "complexity",

@@ -58,7 +58,15 @@ function runtime(cfg: RouterConfig, grant = true): { rt: RouterRuntime; acquired
 		},
 		enforceLoadedCeiling: async () => [],
 	} as unknown as LocalGovernor;
-	const rt: RouterRuntime = { config: cfg, governor, pins: new Map(), previousModels: new Map(), sizes: new Map() };
+	const rt: RouterRuntime = {
+		config: cfg,
+		governor,
+		pins: new Map(),
+		previousModels: new Map(),
+		sizes: new Map(),
+		classifierFailures: 0,
+		classifierBackoffUntil: 0,
+	};
 	return { rt, acquired, released };
 }
 
@@ -433,6 +441,31 @@ test("a failing classifier is recorded on the runtime with its turn (#53)", asyn
 	assert.equal(rt.lastClassifierError?.ref, "llama.cpp/decision-x");
 	assert.equal(rt.lastClassifierError?.turn, 1, "one user message so far");
 	assert.equal(rt.lastClassifierError?.message.length > 0, true);
+});
+
+test("classifier backoff skips the classifier after repeated failures", async () => {
+	const cfg = config({
+		classifier: { ...DEFAULTS.classifier, model: "llama.cpp/decision-x", backoffAfterFailures: 1, backoffMs: 999_999 },
+	});
+	const { rt } = runtime(cfg);
+	let classifyCalls = 0;
+	const ctx = {
+		...ctxWith(),
+		modelRegistry: {
+			find: ctxWith().modelRegistry.find,
+			findOfType: () => ({ provider: "llama.cpp", id: "decision-x" }),
+			classify: async () => {
+				classifyCalls += 1;
+				throw new Error("classifier down");
+			},
+		},
+	} as unknown as ExtensionContext;
+	await routeRequest(rt, "auto", { ...baseReq, reason: "user" } as never, ctx);
+	assert.equal(classifyCalls, 1);
+	const route = await routeRequest(rt, "auto", { ...baseReq, reason: "user" } as never, ctx);
+	assert.equal(classifyCalls, 1, "classifier should be skipped during backoff");
+	assert.equal(route.state?.decision.source, "heuristic");
+	assert.match(route.state?.decision.reason ?? "", /back off/);
 });
 
 test("a successful classification clears the recorded failure (#53)", async () => {
