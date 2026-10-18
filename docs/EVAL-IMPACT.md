@@ -12,9 +12,14 @@ You can change heuristics, thresholds, or classifier config and immediately know
 npm run eval:promptfoo
 ```
 
-- 56 fixtures covering all 0.5.0 features
-- Fails if accuracy drops below 100 %
+- 56 fixtures covering the routing-policy layer
 - Reports `local → cloud` (wasted money) and `cloud → local` (quality risk) misroutes separately
+
+> **What this does and does not cover.** These fixtures exercise the router's *policy*
+> machinery (thresholds, clamping, flavors, gates) through a mocked registry. They do
+> **not** invoke the decision model, and `eval/corpus.jsonl` scores the heuristic at
+> 100% because it was tuned against that corpus. Measuring the real classifier is #97;
+> making the number reflect generalisation is #98. See `docs/EVAL.md`.
 
 ### 2. Misroutes become reproducible fixtures
 
@@ -72,7 +77,8 @@ Each misroute makes the next version better instead of being forgotten.
 
 ### 4. CI-ready quality gate
 
-The pipeline is structured for GitHub Actions:
+The routing-policy layer runs on a GitHub-hosted runner on every push and PR
+(`.github/workflows/eval.yml`) — no self-hosted runner needed for it:
 
 ```bash
 npm run typecheck
@@ -80,13 +86,17 @@ npm test
 npm run eval:promptfoo
 ```
 
-Once the self-hosted runner is wired (#84), a PR that regresses routing cannot merge.
+A PR that regresses the routing *policy* cannot merge green. A PR that regresses the
+*decision model* is not caught yet — that is Layer 2 (#97), which needs a self-hosted
+runner with a reachable classifier (#84).
 
 ## What is live now
 
 | Component | Status | How to use |
 |---|---|---|
-| Promptfoo fixtures | ✅ 56/56 passing | `npm run eval:promptfoo` |
+| Promptfoo fixtures | ✅ 56/56 passing (routing-policy layer) | `npm run eval:promptfoo` |
+| Decision-model scoring | 🚧 not implemented | #97 |
+| Holdout corpus | 🚧 not implemented | #98 |
 | Custom provider | ✅ | `eval/pi-cuttle-provider.ts` |
 | LangFuse Docker stack | ✅ running locally | `npm run langfuse:up` |
 | pi-cuttle routing traces | ✅ emitting | configured in `~/.pi/agent/pi-cuttle.json` |
@@ -96,7 +106,9 @@ Once the self-hosted runner is wired (#84), a PR that regresses routing cannot m
 
 ## What is still your task
 
-- **#84 GitHub Actions self-hosted runner** — wire the three commands above into a workflow.
+- **#84 Layer 2 self-hosted runner** — register a runner with a reachable classifier host for the decision-model layer.
+- **#97 live decision-model scoring** — implement `--live` so the classifier's accuracy is measured.
+- **#98 holdout corpus** — add prompts the heuristic was not tuned on, so accuracy reflects generalisation.
 
 ## Quick commands
 

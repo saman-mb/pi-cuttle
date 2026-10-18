@@ -1,6 +1,31 @@
 # Evaluation Guide
 
-This document describes the pi-cuttle evaluation pipeline using Promptfoo.
+This document describes the pi-cuttle evaluation pipeline.
+
+## Two-layer evaluation pipeline
+
+The pipeline has two layers with different jobs and different requirements. Keep them
+distinct — conflating them produces green results that measure nothing about routing
+quality.
+
+| Layer | What it exercises | Model needed? | Runner | Status |
+|---|---|---|---|---|
+| **Layer 1 — routing policy** | policy, thresholds, thinking-level clamping, subagent override, flavor selection, gates, `/cuttle why` | **no** | GitHub-hosted | ✅ running |
+| **Layer 2 — decision model** | the configured classifier's real accuracy over `eval/corpus.jsonl` | **yes** | self-hosted | 🚧 tracked in #97 |
+
+**Layer 1** drives the router through a **mocked model registry** (`eval/pi-cuttle-provider.ts`)
+and asserts the deterministic decision machinery. It is fast (~1.5 s for 56 fixtures),
+needs no server, and gates every PR. It does **not** invoke the decision model.
+
+**Layer 2** scores the real classifier against the labelled corpus. It needs a reachable
+classifier host (LM Studio / llama.cpp / ollama with a decision model loaded), so it runs
+on a self-hosted runner and not on every PR. Its determinism requirements (temperature 0,
+pinned model digest, corpus-level accuracy gate) are specified in #97.
+
+> **Honest caveat.** `eval/corpus.jsonl` scores the signal-based heuristic at 100%, but
+> `eval/BASELINE.md` records that the heuristic was **tuned against that corpus**. A tuned-to
+> corpus measures memorisation, not generalisation. #98 adds a holdout set so both layers
+> are scored on data neither was tuned on.
 
 ## Overview
 
@@ -11,7 +36,7 @@ and edge cases.
 
 ![pi-cuttle eval pipeline](assets/eval-pipeline.svg)
 
-**Flow:**
+**Flow (Layer 1):**
 1. A user prompt is routed by pi-cuttle, producing a decision (tier, model, thinking level).
 2. The decision is asserted against 56 Promptfoo fixtures.
 3. The same decision is sent to LangFuse as a trace.
@@ -156,16 +181,20 @@ npm run eval
 
 ### CI
 
+Layer 1 runs on every push to `main` and on every PR via `.github/workflows/eval.yml`:
+
 ```yaml
-- name: Run Promptfoo eval
+- name: Routing-policy eval (heuristic layer)
   run: npm run eval:promptfoo
 
-- name: Upload results
+- name: Upload eval results
   uses: actions/upload-artifact@v4
   with:
     name: eval-results
     path: eval/results.json
 ```
+
+Layer 2 (`--live`) is not part of the per-PR gate — see #97 and #84.
 
 ## Interpreting Results
 
