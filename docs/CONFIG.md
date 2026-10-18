@@ -62,7 +62,8 @@ Ordered candidate lists. Catalog order is the final tiebreaker; the router norma
 reorders candidates by ability to handle the turn and, for cloud, by cost.
 
 - If a candidate is missing from the model registry, over its context window, or out
-  of slots, the next resolvable candidate is used before spilling to cloud.
+  of slots, the next resolvable candidate is used before spilling to cloud (except the
+  always-local flavors, which error instead — see [Virtual model flavors](#virtual-model-flavors)).
 - When the cloud catalog resolves nothing, the turn falls back to a local candidate
   rather than failing; only when nothing at all resolves does routing raise a clear error.
 
@@ -219,6 +220,11 @@ does not flip levels mid-turn.
 never route to cloud. When local is genuinely unavailable they fail with an actionable error
 naming the cause and remedy, rather than silently spilling the turn to cloud.
 
+Direct requests (compaction summaries and extension `streamSimple()` calls) are outside the
+local governor and the context guard by design: they are pi's out-of-loop path, have no slot
+release hook, and compaction is what reduces context. Their capacity governance is tracked
+in [#119](https://github.com/saman-mb/pi-cuttle/issues/119).
+
 ### Recommended subagent role mapping
 
 ```json
@@ -245,7 +251,7 @@ is filesystem-based.
 | `maxConcurrent` | number | `1` | Max concurrent local requests across all pi processes. |
 | `maxConcurrentPerModel` | number | `1` | Max concurrent requests per local model. |
 | `maxConcurrentByFlavor` | object | unset | Per-virtual-model budgets, e.g. `{ "local": 1, "fast-local": 1 }`. |
-| `onFull` | `"spill"` \| `"wait"` | `"spill"` | For `cuttle/auto`: route to cloud immediately, or wait for a slot. The always-local flavors (`cuttle/local`, `cuttle/fast-local`, `cuttle/big-local`) never spill; they error when local is unavailable. |
+| `onFull` | `"spill"` \| `"wait"` | `"spill"` | For flavours that may route cloud (`cuttle/auto`, `cuttle/orchestrator`): route to cloud immediately, or wait for a slot. The always-local flavors (`cuttle/local`, `cuttle/fast-local`, `cuttle/big-local`) never spill; they error when local is unavailable. |
 | `waitMs` | number | `20000` | Wait budget when `onFull: "wait"`. On timeout `cuttle/auto` spills to cloud; the always-local flavors error. |
 | `slotDir` | string | `~/.pi/agent/pi-cuttle/slots` | Where slot files live. `~` expands. |
 | `staleSlotMs` | number | `300000` | A slot older than this is reaped. |

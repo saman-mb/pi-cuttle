@@ -77,7 +77,7 @@ or the `pi-subagents` package.
 | `src/config.ts` | Load and merge `pi-cuttle.json` over defaults. |
 | `src/governor.ts` | Cross-process slot broker (concurrency cap only). |
 | `src/classifier.ts` | `decideTier`: classifier call via pi's registry, with heuristic fallback. |
-| `src/virtual-models.ts` | Register `cuttle/auto`, `cuttle/local`, `cuttle/cloud`, `cuttle/fast-local`; `route()` policy + spill. |
+| `src/virtual-models.ts` | Register `cuttle/auto`, `cuttle/local`, `cuttle/cloud`, `cuttle/fast-local`, `cuttle/big-local`, `cuttle/orchestrator`; `route()` policy + local-only pin. |
 | `src/telemetry.ts` | Decision ledger + `/cuttle stats` aggregation (metadata only). |
 | `src/commands.ts` | `/cuttle` command family (on/off, status, init, models, policy, limit, doctor, stats, shadow-report). |
 | `src/shadow.ts` | Phase-2 shadow-mode gate ledger and `/cuttle shadow-report` aggregation. |

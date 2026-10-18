@@ -638,7 +638,7 @@ const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as 
 
 const FLAVORS: { id: RouterFlavor; name: string }[] = [
 	{ id: "auto", name: "Auto (local/cloud)" },
-	{ id: "local", name: "Local preferred" },
+	{ id: "local", name: "Local only" },
 	{ id: "cloud", name: "Cloud only" },
 	{ id: "fast-local", name: "Fast local" },
 	{ id: "big-local", name: "Big local" },
