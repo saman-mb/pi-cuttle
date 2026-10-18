@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-import type { RouterConfig } from "./types.ts";
+import type { ObservabilityConfig, RouterConfig } from "./types.ts";
 
 export const DEFAULTS: RouterConfig = {
 	autoSelect: false,
@@ -98,6 +98,7 @@ export function applyOverrides(config: RouterConfig, parsed: unknown): RouterCon
 		policy: mergePolicy(config.policy, parsed.policy),
 		local: mergeSection(config.local, parsed.local),
 		telemetry: mergeSection(config.telemetry, parsed.telemetry),
+		observability: isRecord(parsed.observability) ? (parsed.observability as unknown as ObservabilityConfig) : config.observability,
 		gates: mergeSection(config.gates ?? {}, parsed.gates),
 		capabilities: mergeSection(config.capabilities ?? {}, parsed.capabilities),
 	};

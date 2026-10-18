@@ -111,6 +111,22 @@ The legacy eval system (`eval/run.ts`, `eval/score.ts`, `eval/corpus.jsonl`) is 
 3. Add category-specific tests as needed
 4. Run both systems in parallel during transition
 
+## Observability and Feedback Loop
+
+Routing decisions are sent to LangFuse when `observability.enabled` is true in
+`pi-cuttle.json` (see `docs/CONFIG.md`). Each trace contains:
+
+- Chosen tier, model, flavor, and thinking level
+- Complexity score and decision source
+- Subagent flag and policy overrides in effect
+
+To use this for continuous improvement:
+
+1. Start LangFuse: `npm run langfuse:up`
+2. Enable observability in your pi-cuttle config
+3. Use the LangFuse UI to mark misrouted traces
+4. Export annotations and add them to `eval/promptfoo.yaml` (tracked in #90)
+
 ## CI Integration
 
 Add to GitHub Actions workflow:

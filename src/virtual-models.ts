@@ -21,6 +21,7 @@ import type { ExtensionAPI, ExtensionContext, ModelRoute, ModelRouteRequest } fr
 import { applyPolicy, decideTier, detectPhase, gatesActive, splitRef, struggleSignals } from "./classifier.ts";
 import { appendShadow } from "./shadow.ts";
 import { isSubagent } from "./subagent.ts";
+import { LangFuseClient } from "./langfuse.ts";
 import {
 	applyContextPressure,
 	applyUserCeiling,
@@ -60,6 +61,8 @@ export interface RouterRuntime {
 	classifierFailures: number;
 	/** Unix ms after which the classifier can be tried again. */
 	classifierBackoffUntil: number;
+	/** Optional LangFuse client for observability (#88). */
+	langfuse?: LangFuseClient;
 }
 
 type RouterRequest = ModelRouteRequest<RouterState>;
@@ -527,6 +530,28 @@ export async function routeRequest(
 		subagent: isSubagent(),
 		at: Date.now(),
 	};
+
+	// Emit routing trace to LangFuse if observability is enabled (#88).
+	if (rt.langfuse) {
+		const traceId = `${sessionId ?? "unknown"}-${rt.lastDecision.at}`;
+		rt.langfuse
+			.trace({
+				traceId,
+				name: "pi-cuttle routing decision",
+				prompt: lastUserText(request.messages),
+				tier,
+				modelId: ref ?? "",
+				flavor,
+				thinkingLevel: effectiveThinking,
+				score: decision.score,
+				reason: reasons.join("; "),
+				source: decision.source,
+				isSubagent: isSubagent(),
+				localBias: rt.config.policy.localBias,
+				enforceUserCeiling: rt.config.policy.thinkingLevels?.enforceUserCeiling,
+			})
+			.catch((error) => rt.log?.(`langfuse trace failed: ${error instanceof Error ? error.message : String(error)}`));
+	}
 
 	try {
 		return resolveModel(ctx, ref, effectiveThinking, next);

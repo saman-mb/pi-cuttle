@@ -290,6 +290,37 @@ Missing prices degrade to counts rather than inventing numbers.
 }
 ```
 
+## `observability`
+
+Send routing decisions to an observability backend. Only LangFuse is supported today.
+Traces are written best-effort and never block a turn.
+
+Set up LangFuse locally with `npm run langfuse:up` (see `docs/LANGFUSE.md`), then add
+its credentials to your user config:
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `enabled` | boolean | `false` | Emit routing traces. |
+| `provider` | string | `"langfuse"` | Backend type; only `"langfuse"` supported. |
+| `baseUrl` | string | `"http://localhost:3000"` | LangFuse API base URL. |
+| `publicKey` | string | — | LangFuse project public key. |
+| `secretKey` | string | — | LangFuse project secret key. |
+
+```json
+"observability": {
+  "enabled": true,
+  "provider": "langfuse",
+  "baseUrl": "http://localhost:3000",
+  "publicKey": "pk-lf-...",
+  "secretKey": "sk-lf-..."
+}
+```
+
+Each routing decision creates a LangFuse trace containing the chosen tier, model,
+flavor, complexity score, thinking level, and whether a subagent policy override
+was active. Annotate misroutes in the LangFuse UI; they can be exported back into
+the eval corpus (see `docs/EVAL.md` and #90).
+
 ## Precedence summary
 
 ```

@@ -24,6 +24,7 @@ import { LocalGovernor } from "./governor.ts";
 import { registerCuttleCommand } from "./commands.ts";
 import { Telemetry, isPhysicalTurn } from "./telemetry.ts";
 import { registerVirtualModels, type RouterRuntime } from "./virtual-models.ts";
+import { LangFuseClient } from "./langfuse.ts";
 import type { Tier } from "./types.ts";
 import { VIRTUAL_PROVIDER } from "./types.ts";
 
@@ -50,6 +51,8 @@ export default function modelRouter(pi: ExtensionAPI): void {
 	log?.(`factory cwd=${process.cwd()} autoSelect=${loaded.config.autoSelect} local=${loaded.config.catalog.local.join(",")} cloud=${loaded.config.catalog.cloud.join(",")} sources=${loaded.sources.join("|")} warnings=${loaded.warnings.join(";")}`);
 	const governor = new LocalGovernor(loaded.config.local);
 	const telemetry = new Telemetry(loaded.config.telemetry, loaded.config.catalog.local);
+	const langfuse = loaded.config.observability?.enabled ? new LangFuseClient(loaded.config.observability) : undefined;
+	log?.(`observability=${loaded.config.observability?.enabled ? loaded.config.observability.provider : "off"}`);
 
 	const rt: RouterRuntime = {
 		config: loaded.config,
@@ -59,6 +62,7 @@ export default function modelRouter(pi: ExtensionAPI): void {
 		classifierFailures: 0,
 		classifierBackoffUntil: 0,
 		log,
+		langfuse,
 		// #26: read lazily; the value is undefined inside the factory.
 		getForced: () => {
 			const value = pi.getFlag("cuttle-force");

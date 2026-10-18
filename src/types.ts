@@ -132,6 +132,20 @@ export interface TelemetryConfig {
 	baseline?: string;
 }
 
+/** Observability backend configuration. */
+export interface ObservabilityConfig {
+	/** When true, routing decisions are sent to the configured observability backend. */
+	enabled: boolean;
+	/** Only "langfuse" is supported today. */
+	provider: "langfuse";
+	/** LangFuse base URL, e.g. http://localhost:3000 */
+	baseUrl: string;
+	/** LangFuse public key. */
+	publicKey: string;
+	/** LangFuse secret key. */
+	secretKey: string;
+}
+
 /** A single gate's configuration. */
 export interface GateConfig {
 	/** When false, the gate is skipped entirely. */
@@ -184,6 +198,8 @@ export interface RouterConfig {
 	policy: PolicyConfig;
 	local: LocalConfig;
 	telemetry: TelemetryConfig;
+	/** Optional observability backend for routing traces. */
+	observability?: ObservabilityConfig;
 	/** Optional phase-2 gates. */
 	gates?: GatesConfig;
 	/**
