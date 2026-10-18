@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { buildStatusLines } from "../src/commands.ts";
+import { buildStatusLines, checkCatalog } from "../src/commands.ts";
 import { DEFAULTS } from "../src/config.ts";
 import type { RouterRuntime } from "../src/virtual-models.ts";
 
@@ -24,6 +24,25 @@ test("buildStatusLines shows routing enabled/disabled", () => {
 
 	const disabled = buildStatusLines({ rt: rtWith(false), loaded: { config: DEFAULTS, sources: [], warnings: [] }, effectiveChars: DEFAULTS.classifier.stateChars, governor: { slots: [], localMax: 1 } });
 	assert.ok(disabled.some((line) => line.includes("routing:  disabled")));
+});
+
+test("checkCatalog separates resolvable catalog entries from missing ones", () => {
+	const known = new Set(["mtplx/mtplx-flash-next-optimized-speed", "opencode-go/deepseek-v4.1-flash"]);
+	const find = (provider: string, id: string): unknown =>
+		known.has(`${provider}/${id}`) ? { provider, id } : undefined;
+
+	const { resolvable, missing } = checkCatalog(
+		["mtplx/mtplx-qwen38-27b-optimized-quality", "mtplx/mtplx-flash-next-optimized-speed", "garbage"],
+		find,
+	);
+	assert.deepEqual(resolvable, ["mtplx/mtplx-flash-next-optimized-speed"]);
+	assert.deepEqual(missing, ["mtplx/mtplx-qwen38-27b-optimized-quality", "garbage"]);
+});
+
+test("checkCatalog reports a fully unresolvable tier as all-missing", () => {
+	const { resolvable, missing } = checkCatalog(["typo/model"], () => undefined);
+	assert.deepEqual(resolvable, []);
+	assert.deepEqual(missing, ["typo/model"]);
 });
 
 test("buildStatusLines surfaces the last classifier failure", () => {

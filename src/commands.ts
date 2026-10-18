@@ -65,6 +65,27 @@ async function editLocalLimit(rt: RouterRuntime, ctx: ExtensionCommandContext): 
 	ctx.ui.notify(`cuttle: maxConcurrent -> ${Math.floor(value)}\nwritten to ${path}`, "info");
 }
 
+/**
+ * Partition catalog entries into the ones pi's registry resolves and the ones it does not.
+ *
+ * Routing skips unresolvable entries and uses the next candidate, so a tier is usable as
+ * long as at least one entry resolves. `/cuttle doctor` reports the missing entries without
+ * failing the whole tier (see `doctor`). Exported so the partition is pinned by tests.
+ */
+export function checkCatalog(
+	refs: readonly string[],
+	find: (provider: string, id: string) => unknown,
+): { resolvable: string[]; missing: string[] } {
+	const resolvable: string[] = [];
+	const missing: string[] = [];
+	for (const ref of refs) {
+		const parsed = splitRef(ref);
+		if (parsed && find(parsed.provider, parsed.id)) resolvable.push(ref);
+		else missing.push(ref);
+	}
+	return { resolvable, missing };
+}
+
 async function doctor(rt: RouterRuntime, ctx: ExtensionCommandContext): Promise<void> {
 	const lines: string[] = [];
 
@@ -107,13 +128,13 @@ async function doctor(rt: RouterRuntime, ctx: ExtensionCommandContext): Promise<
 
 	for (const tier of ["local", "cloud"] as const) {
 		const list = tier === "local" ? rt.config.catalog.local : rt.config.catalog.cloud;
-		const missing: string[] = [];
-		for (const r of list) {
-			const parsed = splitRef(r);
-			if (!parsed || !ctx.modelRegistry.find(parsed.provider, parsed.id)) missing.push(r);
-		}
-		if (missing.length > 0) {
-			lines.push(`${tier}: FAIL not in pi catalog: ${missing.join(", ")}`);
+		const { resolvable, missing } = checkCatalog(list, (provider, id) => ctx.modelRegistry.find(provider, id));
+		if (list.length > 0 && resolvable.length === 0) {
+			lines.push(`${tier}: FAIL none of these are in pi's catalog: ${list.join(", ")}`);
+			lines.push(`  fix: register the model in pi, or update catalog.${tier} in pi-cuttle.json`);
+		} else if (missing.length > 0) {
+			lines.push(`${tier}: OK ${resolvable.join(", ")}`);
+			lines.push(`  skipped (not in pi catalog): ${missing.join(", ")}`);
 		} else {
 			lines.push(`${tier}: OK ${list.join(", ") || "(none)"}`);
 		}
