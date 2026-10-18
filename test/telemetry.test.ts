@@ -101,6 +101,23 @@ test("a turn attributed to the virtual provider is not recorded (#62)", () => {
 	assert.equal(isPhysicalTurn({ provider: "", model: "auto" }), false);
 });
 
+test("stats falls back to registry pricing when telemetry.pricing is missing", () => {
+	const t = new Telemetry({ ...cfg, pricing: {} }, []);
+	record(t, "cloud", "cloud/big", 1_000_000, 0);
+	const fakeCtx = {
+		modelRegistry: {
+			find: (provider: string, id: string) => {
+				if (provider === "cloud" && id === "big") return { cost: { input: 2, output: 8 } };
+				if (provider === "cloud" && id === "baseline") return { cost: { input: 1, output: 5 } };
+				return undefined;
+			},
+		},
+	};
+	const stats = t.stats(7, (ref) => Telemetry.registryPriceFor(fakeCtx, ref));
+	assert.equal(stats.pricingComplete, true);
+	assert.ok(Math.abs(stats.spent - 2.0) < 1e-9, `spent ${stats.spent}`);
+});
+
 test("a turn that reached a physical model is recorded (#62)", () => {
 	assert.equal(isPhysicalTurn({ provider: "lmstudio", model: "prism-ml/bonsai-27b" }), true);
 	assert.equal(isPhysicalTurn({ provider: "opencode-go", model: "deepseek-v4.1-flash" }), true);

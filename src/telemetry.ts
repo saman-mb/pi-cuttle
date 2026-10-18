@@ -99,8 +99,9 @@ export class Telemetry {
 		}
 	}
 
-	/** Read the ledger and aggregate the last `days`. Missing prices degrade to counts. */
-	stats(days = 7): Stats {
+	/** Read the ledger and aggregate the last `days`. Missing prices degrade to counts.
+	 *  When `priceFor` is provided, it is consulted before telemetry.pricing. */
+	stats(days = 7, priceFor?: (ref: string) => Price | undefined): Stats {
 		const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
 		const records: DecisionRecord[] = [];
 		try {
@@ -146,12 +147,12 @@ export class Telemetry {
 			byModel.set(rec.model, { turns: prev.turns + 1, tokens: prev.tokens + tokens });
 
 			// "Saved vs all-cloud": what this turn would have cost on the baseline model.
-			const baseline = costOf(baselinePrice, rec.inputTokens, rec.outputTokens);
+			const baseline = costOf(baselinePrice ?? priceFor?.(baselineRef ?? ""), rec.inputTokens, rec.outputTokens);
 			if (baseline === undefined) stats.pricingComplete = false;
 			else stats.baselineCost += baseline;
 
 			if (rec.tier === "cloud") {
-				const actual = costOf(this.priceFor(`${rec.provider}/${rec.model}`), rec.inputTokens, rec.outputTokens);
+				const actual = costOf(priceFor?.(`${rec.provider}/${rec.model}`) ?? this.priceFor(`${rec.provider}/${rec.model}`), rec.inputTokens, rec.outputTokens);
 				if (actual === undefined) stats.pricingComplete = false;
 				else stats.spent += actual;
 			}
@@ -165,6 +166,20 @@ export class Telemetry {
 
 	private priceFor(ref: string): Price | undefined {
 		return this.cfg.pricing[ref];
+	}
+
+	/** Exported resolver that reads pi's model registry cost into telemetry's Price shape. */
+	static registryPriceFor(
+		ctx: { modelRegistry: { find: (provider: string, id: string) => { cost?: { input: number; output: number } } | undefined } },
+		ref: string,
+	): Price | undefined {
+		const slash = ref.indexOf("/");
+		if (slash <= 0 || slash === ref.length - 1) return undefined;
+		const provider = ref.slice(0, slash);
+		const id = ref.slice(slash + 1);
+		const model = ctx.modelRegistry.find(provider, id);
+		if (!model?.cost) return undefined;
+		return { input: model.cost.input, output: model.cost.output };
 	}
 }
 

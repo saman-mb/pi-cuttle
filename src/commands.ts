@@ -8,7 +8,8 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 
 import { isRecord, mergePolicy, saveUserConfig, type LoadedConfig } from "./config.ts";
 import { splitRef } from "./classifier.ts";
-import { formatStats, type Telemetry } from "./telemetry.ts";
+import { formatStats, Telemetry } from "./telemetry.ts";
+import type { Telemetry as TelemetryType } from "./telemetry.ts";
 import { computeAgreement, formatAgreement, readShadow } from "./shadow.ts";
 import type { RouterRuntime } from "./virtual-models.ts";
 import type { GovernorStatus, PolicyMode, RouterConfig, Tier } from "./types.ts";
@@ -228,7 +229,7 @@ async function status(rt: RouterRuntime, loaded: LoadedConfig, ctx: ExtensionCom
 	ctx.ui.notify(lines.join("\n"), "info");
 }
 
-export function registerCuttleCommand(pi: ExtensionAPI, rt: RouterRuntime, loaded: LoadedConfig, telemetry: Telemetry): void {
+export function registerCuttleCommand(pi: ExtensionAPI, rt: RouterRuntime, loaded: LoadedConfig, telemetry: TelemetryType): void {
 	pi.registerCommand("cuttle", {
 		description: "Toggle and inspect local/cloud model routing",
 		handler: async (args, ctx) => {
@@ -237,7 +238,8 @@ export function registerCuttleCommand(pi: ExtensionAPI, rt: RouterRuntime, loade
 
 			if (sub === "stats") {
 				const days = Number.isFinite(Number(extra)) && Number(extra) > 0 ? Math.floor(Number(extra)) : 7;
-				ctx.ui.notify(formatStats(telemetry.stats(days), rt.config.telemetry.baseline), "info");
+				const priceFor = (ref: string) => Telemetry.registryPriceFor(ctx, ref);
+				ctx.ui.notify(formatStats(telemetry.stats(days, priceFor), rt.config.telemetry.baseline), "info");
 				return;
 			}
 
