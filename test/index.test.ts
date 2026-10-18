@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { createServer, type Server } from "node:http";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -248,6 +249,60 @@ test("a subagent child on a non-cuttle model is recorded as a router bypass (#13
 		if (originalDebug === undefined) delete process.env.PI_CUTTLE_DEBUG;
 		else process.env.PI_CUTTLE_DEBUG = originalDebug;
 		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("#132: a child bypass emits a routed:false score", async () => {
+	const requests: { url?: string; body?: { name?: string; value?: boolean; dataType?: string; traceId?: string } }[] = [];
+	const server: Server = createServer((req, res) => {
+		let raw = "";
+		req.on("data", (chunk) => (raw += chunk));
+		req.on("end", () => {
+			requests.push({ url: req.url, body: raw ? JSON.parse(raw) : undefined });
+			res.writeHead(200, { "Content-Type": "application/json" });
+			res.end("{}");
+		});
+	});
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const port = (server.address() as { port: number }).port;
+
+	const originalSubagent = process.env[SUBAGENT_CHILD_ENV];
+	process.env[SUBAGENT_CHILD_ENV] = "1";
+	try {
+		await withTempConfig(
+			{
+				autoSelect: true,
+				local: { preload: false, pinClassifier: false },
+				catalog: { local: ["lmstudio/local-model"], cloud: ["cloud/big-model"] },
+				observability: {
+					enabled: true,
+					provider: "langfuse",
+					baseUrl: `http://127.0.0.1:${port}`,
+					publicKey: "pk-test",
+					secretKey: "sk-test",
+				},
+			},
+			async () => {
+				const { pi, events } = createMockPI();
+				modelRouter(pi);
+				const handler = (events["session_start"] ?? [])[0];
+				assert.ok(handler);
+				await handler({}, createContext({ provider: "opencode-go", id: "gpt-6-luna" }));
+				// The score is fired and forgotten; give the POST a moment to land.
+				await new Promise((resolve) => setTimeout(resolve, 50));
+				const score = requests.find((r) => r.url === "/api/public/scores");
+				assert.ok(score, "a bypass emits a score");
+				assert.equal(score.body?.name, "routed");
+				assert.equal(score.body?.value, false);
+				assert.equal(score.body?.dataType, "BOOLEAN");
+				assert.ok(score.body?.traceId?.includes("bypass"), "scored against the bypass trace");
+			},
+		);
+	} finally {
+		if (originalSubagent === undefined) delete process.env[SUBAGENT_CHILD_ENV];
+		else process.env[SUBAGENT_CHILD_ENV] = originalSubagent;
+		server.closeAllConnections();
+		server.close();
 	}
 });
 

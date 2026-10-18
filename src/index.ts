@@ -25,6 +25,7 @@ import { appendFileSync } from "node:fs";
 import { loadConfig } from "./config.ts";
 import { splitRef } from "./classifier.ts";
 import { isSubagent } from "./subagent.ts";
+import { bypassScores } from "./scores.ts";
 import { LocalGovernor } from "./governor.ts";
 import { registerCuttleCommand } from "./commands.ts";
 import { Telemetry, isPhysicalTurn } from "./telemetry.ts";
@@ -91,15 +92,30 @@ function observeChildBypass(rt: RouterRuntime, ctx: ExtensionContext, kind: "sub
 			: "session with a parent launched on a non-cuttle model, so it never entered the router";
 	rt.log?.(`child bypass kind=${kind} model=${ref ?? "unknown"} session=${sessionId}`);
 	if (!rt.langfuse) return;
-	void rt.langfuse
-		.bypass({ traceId: `${sessionId}-bypass-${Date.now()}`, modelId: ref ?? "unknown", kind, parentSession, reason })
+	const traceId = `${sessionId}-bypass-${Date.now()}`;
+	const langfuse = rt.langfuse;
+	// The score follows the trace: scoring before the trace lands, or letting it outlive the
+	// session, both mislead. Best-effort throughout — a failure is logged, never thrown.
+	void langfuse
+		.bypass({ traceId, modelId: ref ?? "unknown", kind, parentSession, reason })
+		.then(() => Promise.all(bypassScores().map((entry) => langfuse.score({ traceId, ...entry }))))
 		.catch((error) => rt.log?.(`langfuse bypass failed: ${error instanceof Error ? error.message : String(error)}`));
 }
 
 export default function modelRouter(pi: ExtensionAPI): void {
 	const loaded = loadConfig(process.cwd());
 	const debugPath = process.env.PI_CUTTLE_DEBUG;
-	const log = debugPath ? (message: string) => appendFileSync(debugPath, message + "\n") : undefined;
+	// A late log line must never throw: the debug file can be gone by the time an async emission
+	// settles, and logging is diagnostic, not load-bearing.
+	const log = debugPath
+		? (message: string) => {
+				try {
+					appendFileSync(debugPath, message + "\n");
+				} catch {
+					/* the debug file is gone; drop the line */
+				}
+			}
+		: undefined;
 	log?.(`factory cwd=${process.cwd()} autoSelect=${loaded.config.autoSelect} local=${loaded.config.catalog.local.join(",")} cloud=${loaded.config.catalog.cloud.join(",")} sources=${loaded.sources.join("|")} warnings=${loaded.warnings.join(";")}`);
 	const governor = new LocalGovernor(loaded.config.local);
 	const telemetry = new Telemetry(loaded.config.telemetry, loaded.config.catalog.local);
