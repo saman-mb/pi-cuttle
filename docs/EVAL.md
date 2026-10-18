@@ -124,8 +124,19 @@ To use this for continuous improvement:
 
 1. Start LangFuse: `npm run langfuse:up`
 2. Enable observability in your pi-cuttle config
-3. Use the LangFuse UI to mark misrouted traces
-4. Export annotations and add them to `eval/promptfoo.yaml` (tracked in #90)
+3. Tag misrouted traces with `misroute` in the LangFuse UI (and optionally set
+   `correctTier` in the trace metadata)
+4. Export misroutes:
+   ```bash
+   npm run eval:export-misroutes 7   # last 7 days
+   npm run eval:convert-misroutes    # convert to Promptfoo format
+   ```
+5. Run the misroute regression eval:
+   ```bash
+   npm run eval:promptfoo:misroutes
+   ```
+6. Once fixes are verified, promote fixtures from `eval/misroutes-promptfoo.yaml`
+   into `eval/promptfoo.yaml` so they are enforced by the main eval.
 
 ## CI Integration
 

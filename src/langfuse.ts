@@ -22,6 +22,18 @@ export interface RoutingTrace {
 	enforceUserCeiling?: boolean;
 }
 
+export interface LangFuseTrace {
+	id: string;
+	timestamp: string;
+	name: string;
+	metadata?: Record<string, unknown>;
+	tags?: string[];
+}
+
+export interface LangFuseTraceList {
+	data: LangFuseTrace[];
+}
+
 export class LangFuseClient {
 	private readonly cfg: ObservabilityConfig;
 	private readonly auth: string;
@@ -71,6 +83,25 @@ export class LangFuseClient {
 			// Best-effort: never throw. Callers may log if they wish.
 			throw error;
 		}
+	}
+
+	async fetchTraces(from?: Date, to?: Date, tags?: string[]): Promise<LangFuseTrace[]> {
+		const params = new URLSearchParams();
+		params.set("limit", "100");
+		if (from) params.set("fromTimestamp", from.toISOString());
+		if (to) params.set("toTimestamp", to.toISOString());
+		if (tags && tags.length > 0) {
+			for (const tag of tags) params.append("tags", tag);
+		}
+
+		const response = await fetch(`${this.baseUrl}/api/public/traces?${params.toString()}`, {
+			headers: { Authorization: this.auth },
+		});
+		if (!response.ok) {
+			throw new Error(`LangFuse fetchTraces failed: ${response.status} ${await response.text()}`);
+		}
+		const body = (await response.json()) as LangFuseTraceList;
+		return body.data ?? [];
 	}
 
 	async health(): Promise<boolean> {

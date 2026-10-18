@@ -7,6 +7,7 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 import { isRecord, mergePolicy, saveUserConfig, type LoadedConfig } from "./config.ts";
+import { LangFuseClient } from "./langfuse.ts";
 import { splitRef } from "./classifier.ts";
 import { formatStats, Telemetry } from "./telemetry.ts";
 import type { Telemetry as TelemetryType } from "./telemetry.ts";
@@ -249,6 +250,64 @@ async function why(rt: RouterRuntime, ctx: ExtensionCommandContext): Promise<voi
 	ctx.ui.notify(lines.join("\n"), "info");
 }
 
+async function exportMisroutes(rt: RouterRuntime, ctx: ExtensionCommandContext, daysArg?: string): Promise<void> {
+	const days = Number.isFinite(Number(daysArg)) && Number(daysArg) > 0 ? Math.floor(Number(daysArg)) : 7;
+	if (!rt.langfuse) {
+		ctx.ui.notify("cuttle: observability is not configured (set observability in pi-cuttle.json)", "warning");
+		return;
+	}
+	if (!(rt.langfuse instanceof LangFuseClient)) {
+		ctx.ui.notify("cuttle: observability backend is not LangFuse", "warning");
+		return;
+	}
+
+	const to = new Date();
+	const from = new Date(Date.now() - days * 86_400_000);
+	ctx.ui.notify(`cuttle: fetching misroute traces from ${from.toISOString()}...`, "info");
+
+	try {
+		const traces = await rt.langfuse.fetchTraces(from, to, ["misroute"]);
+		const fixtures = traces
+			.map((trace) => {
+				const md = trace.metadata ?? {};
+				const prompt = typeof md.prompt === "string" ? md.prompt : undefined;
+				const tier = typeof md.tier === "string" ? md.tier : undefined;
+				const modelId = typeof md.modelId === "string" ? md.modelId : undefined;
+				const flavor = typeof md.flavor === "string" ? md.flavor : "auto";
+				const correctTier = typeof md.correctTier === "string" ? md.correctTier : tier;
+				if (!prompt || !correctTier || !modelId) return undefined;
+				return {
+					prompt,
+					expectedTier: correctTier,
+					actualTier: tier ?? correctTier,
+					actualModel: modelId,
+					flavor,
+					score: typeof md.score === "number" ? md.score : undefined,
+					reason: typeof md.reason === "string" ? md.reason : "",
+					notes: `Exported from LangFuse trace ${trace.id} at ${trace.timestamp}`,
+					source: typeof md.source === "string" ? md.source : "unknown",
+				};
+			})
+			.filter((f): f is NonNullable<typeof f> => f !== undefined);
+
+		if (fixtures.length === 0) {
+			ctx.ui.notify("cuttle: no misroute annotations found", "info");
+			return;
+		}
+
+		// Append to eval/misroutes.jsonl relative to the extension root.
+		const { fileURLToPath } = await import("node:url");
+		const { dirname, join } = await import("node:path");
+		const outputPath = join(dirname(fileURLToPath(import.meta.url)), "..", "eval", "misroutes.jsonl");
+		const { appendFileSync } = await import("node:fs");
+		const lines = fixtures.map((f) => JSON.stringify(f)).join("\n") + "\n";
+		appendFileSync(outputPath, lines);
+		ctx.ui.notify(`cuttle: appended ${fixtures.length} misroute(s) to eval/misroutes.jsonl`, "info");
+	} catch (error) {
+		ctx.ui.notify(`cuttle: export failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+	}
+}
+
 export function registerCuttleCommand(pi: ExtensionAPI, rt: RouterRuntime, loaded: LoadedConfig, telemetry: TelemetryType): void {
 	pi.registerCommand("cuttle", {
 		description: "Toggle and inspect local/cloud model routing",
@@ -309,6 +368,7 @@ export function registerCuttleCommand(pi: ExtensionAPI, rt: RouterRuntime, loade
 			if (sub === "limit") return editLocalLimit(rt, ctx);
 			if (sub === "doctor") return doctor(rt, ctx);
 			if (sub === "why") return why(rt, ctx);
+			if (sub === "export-misroutes") return exportMisroutes(rt, ctx, extra);
 			return status(rt, loaded, ctx);
 		},
 	});

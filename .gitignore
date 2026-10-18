@@ -6,6 +6,8 @@ dist/
 
 # Promptfoo eval output (generated per run).
 eval/results.json
+eval/misroutes-results.json
+eval/misroutes.jsonl
 
 # Runtime state written by the local governor (never commit).
 .slots/
