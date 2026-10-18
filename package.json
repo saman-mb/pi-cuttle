@@ -62,7 +62,10 @@
     "typecheck": "tsc --noEmit",
     "badges": "bash scripts/render-badges.sh",
     "lint": "tsc --noEmit",
-    "prepublishOnly": "npm test && npm run typecheck"
+    "prepublishOnly": "npm test && npm run typecheck",
+    "langfuse:up": "docker compose -f docker-compose.langfuse.yml up -d",
+    "langfuse:down": "docker compose -f docker-compose.langfuse.yml down",
+    "langfuse:logs": "docker compose -f docker-compose.langfuse.yml logs -f"
   },
   "engines": {
     "node": ">=22.6.0"
@@ -87,6 +90,7 @@
     "@earendil-works/pi-ai": "1.2.0",
     "@earendil-works/pi-coding-agent": "1.2.0",
     "@types/node": "^22.0.0",
+    "promptfoo": "^0.124.1",
     "typescript": "^5.6.0"
   }
 }

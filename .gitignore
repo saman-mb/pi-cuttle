@@ -2,6 +2,7 @@ node_modules/
 dist/
 *.log
 .DS_Store
+.env
 
 # Runtime state written by the local governor (never commit).
 .slots/

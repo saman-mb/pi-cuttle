@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  langfuse-postgres:
+    image: postgres:17-alpine
+    container_name: langfuse-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${LANGFUSE_DATABASE_USER:-postgres}
+      POSTGRES_PASSWORD: ${LANGFUSE_DATABASE_PASSWORD:-postgres}
+      POSTGRES_DB: ${LANGFUSE_DATABASE_NAME:-langfuse}
+    volumes:
+      - langfuse-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${LANGFUSE_DATABASE_USER:-postgres} -d ${LANGFUSE_DATABASE_NAME:-langfuse}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  langfuse-redis:
+    image: redis:7-alpine
+    container_name: langfuse-redis
+    restart: unless-stopped
+    command: redis-server --save "" --appendonly no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - redis
+
+  langfuse-app:
+    image: langfuse/langfuse:latest
+    container_name: langfuse-app
+    restart: unless-stopped
+    depends_on:
+      langfuse-postgres:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+        optional: true
+    ports:
+      - "${LANGFUSE_PORT:-3000}:3000"
+    environment:
+      DATABASE_URL: postgresql://${LANGFUSE_DATABASE_USER:-postgres}:${LANGFUSE_DATABASE_PASSWORD:-postgres}@langfuse-postgres:5432/${LANGFUSE_DATABASE_NAME:-langfuse}
+      
+      # Authentication
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      NEXTAUTH_URL: http://localhost:${LANGFUSE_PORT:-3000}
+      
+      # Encryption (required for sensitive data storage)
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      
+      # Salt for hashing (required)
+      SALT: ${SALT}
+      
+      # Redis (optional, improves performance)
+      REDIS_HOST: ${REDIS_HOST:-langfuse-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_AUTH: ${REDIS_AUTH:-}
+      
+      # Telemetry opt-out
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: ${LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES:-false}
+
+volumes:
+  langfuse-postgres-data:
