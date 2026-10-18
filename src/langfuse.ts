@@ -124,6 +124,18 @@ export class LangFuseClient {
 
 	 * Best-effort by contract — callers fire and forget, and a failure here must never reach a turn.
 	 */
+	/** The scores recorded against one trace. */
+	async fetchScores(traceId: string): Promise<{ name: string; value: boolean | number | string }[]> {
+		const response = await fetch(`${this.baseUrl}/api/public/scores?traceId=${encodeURIComponent(traceId)}`, {
+			headers: { Authorization: this.auth },
+		});
+		if (!response.ok) {
+			throw new Error(`LangFuse fetchScores failed: ${response.status} ${await response.text()}`);
+		}
+		const body = (await response.json()) as { data?: { name: string; value: boolean | number | string }[] };
+		return body.data ?? [];
+	}
+
 	async score(entry: { traceId: string; name: string; value: boolean | number | string; dataType: string }): Promise<void> {
 		await this.post("/api/public/scores", {
 			traceId: entry.traceId,

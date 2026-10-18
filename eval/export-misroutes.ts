@@ -60,7 +60,26 @@ interface MisrouteFixture {
 	source: string;
 }
 
-function traceToFixture(trace: { id: string; timestamp: string; metadata?: Record<string, unknown> }): MisrouteFixture | undefined {
+export interface TraceScore {
+	name: string;
+	value: boolean | number | string;
+}
+
+export interface ScoredTrace {
+	id: string;
+	timestamp: string;
+	metadata?: Record<string, unknown>;
+	tags?: string[];
+	scores?: TraceScore[];
+}
+
+/** True when a trace was flagged as a misroute, by tag or by a failing score. */
+export function isMisroute(trace: ScoredTrace): boolean {
+	if (trace.tags?.includes("misroute")) return true;
+	return trace.scores?.some((s) => s.name === "flavor_compliance" && s.value === false) ?? false;
+}
+
+function traceToFixture(trace: ScoredTrace): MisrouteFixture | undefined {
 	const md = trace.metadata ?? {};
 	const prompt = typeof md.prompt === "string" ? md.prompt : undefined;
 	const tier = typeof md.tier === "string" ? md.tier : undefined;
@@ -76,9 +95,19 @@ function traceToFixture(trace: { id: string; timestamp: string; metadata?: Recor
 		flavor,
 		score: typeof md.score === "number" ? md.score : undefined,
 		reason: typeof md.reason === "string" ? md.reason : "",
-		notes: `Exported from LangFuse trace ${trace.id} at ${trace.timestamp}`,
+		notes: [
+			`Exported from LangFuse trace ${trace.id} at ${trace.timestamp}`,
+			...(trace.scores?.some((s) => s.name === "flavor_compliance" && s.value === false)
+				? ["flagged by flavor_compliance=false"]
+				: []),
+		].join("; "),
 		source: typeof md.source === "string" ? md.source : "unknown",
 	};
+}
+
+/** The traces worth turning into fixtures. Pure, so the selection is testable without Langfuse. */
+export function selectMisroutes(traces: readonly ScoredTrace[]): MisrouteFixture[] {
+	return traces.filter(isMisroute).map(traceToFixture).filter((f): f is MisrouteFixture => f !== undefined);
 }
 
 async function main() {
@@ -99,8 +128,18 @@ async function main() {
 	const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
 	console.log(`Fetching misroute traces from ${from.toISOString()} to ${to.toISOString()}...`);
-	const traces = await client.fetchTraces(from, to, ["misroute"]);
-	const fixtures = traces.map(traceToFixture).filter((f): f is MisrouteFixture => f !== undefined);
+	// Tagged traces, plus every trace in the window — a failing score flags a trace that carries no tag.
+	const tagged = await client.fetchTraces(from, to, ["misroute"]);
+	const all = await client.fetchTraces(from, to);
+	const seen = new Set(tagged.map((t) => t.id));
+	const candidates = [...tagged, ...all.filter((t) => !seen.has(t.id))];
+
+	const scored: ScoredTrace[] = [];
+	for (const trace of candidates) {
+		const scores = await client.fetchScores(trace.id).catch(() => [] as TraceScore[]);
+		scored.push({ ...trace, scores });
+	}
+	const fixtures = selectMisroutes(scored);
 
 	if (fixtures.length === 0) {
 		console.log("No misroute annotations found.");
