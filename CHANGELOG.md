@@ -19,6 +19,14 @@ versions follow [SemVer](https://semver.org/).
   `/cuttle config` prints the same seven values with effective sources, locks, unresolved
   entries, and both config paths. Never claims a headless edit occurred.
 
+### Fixed
+
+- **Subagent runs launched with a pinned physical model no longer fail model verification.**
+  `autoSelect` is skipped in subagent child processes (`PI_SUBAGENT_CHILD=1`) and in any
+  session with a `parentSession` header (foreground children and forks), so the model chosen
+  by the launcher or parent is left alone. Children still route when launched with
+  `cuttle/auto`, as `docs/SUBAGENTS.md` documents. Fixes #95.
+
 ## [0.4.0] — 2026-10-18
 
 ### Added

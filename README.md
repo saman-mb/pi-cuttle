@@ -129,7 +129,7 @@ are moved to the new names automatically.
 
 | Field | Meaning |
 |---|---|
-| `autoSelect` | Opt in to selecting `cuttle/auto` at session start. Default `false` so installs never hijack the session model. |
+| `autoSelect` | Opt in to selecting `cuttle/auto` at session start. Default `false` so installs never hijack the session model. Never applies inside a subagent child or a forked session: the model chosen by the launcher or parent is kept. |
 | `classifier.model` | `provider/model` of a pi-registered classifier. Examples: `llama.cpp/ggml-org/Kev-9B-GGUF:Q8_0`, `opencode-go/some-classifier`. |
 | `classifier.fallback` | `heuristic` \| `local` \| `cloud` when the classifier is unavailable. |
 | `classifier.timeoutMs` | How long to wait for the classifier answer. |
