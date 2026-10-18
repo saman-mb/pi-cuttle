@@ -15,7 +15,7 @@ jobs:
   live-eval:
     # The runner is a Docker container on your Mac; it reaches the native
     # llama.app server via host.docker.internal.
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: [self-hosted, Linux, ARM64, eval]
     timeout-minutes: 20
     env:
       # Docker → host: use host.docker.internal to reach the native server

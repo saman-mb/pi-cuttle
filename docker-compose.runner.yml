@@ -1,34 +1,42 @@
-# Self-hosted GitHub Actions runner for pi-cuttle
-# 
-# This runs the runner in Docker on your Mac, reaching the native llama.cpp
-# server at host.docker.internal:9931 (Metal GPU acceleration).
+# Self-hosted GitHub Actions runner for pi-cuttle — Docker setup
+#
+# Runs the runner as a Linux container on the host that can reach the classifier.
+# The container reaches the native llama.cpp server via host.docker.internal, so the
+# model keeps host GPU acceleration while the runner stays containerized.
 #
 # Setup:
-#   1. Go to GitHub → Settings → Actions → Runners → New self-hosted runner
-#   2. Generate a token and save it to .env as RUNNER_TOKEN
-#   3. Run: docker compose -f docker-compose.runner.yml up -d
+#   1. Create a GitHub PAT with `repo` scope (Settings → Developer settings → Tokens).
+#      A PAT — not an expiring registration token — is what lets the runner re-register
+#      automatically after a restart.
+#   2. Put it in .env next to this file:  GITHUB_PAT=ghp_...
+#   3. docker compose up -d --build
 #
-# The runner will auto-start on Docker Desktop launch (restart: unless-stopped).
-# Ensure "Start Docker Desktop when you sign in" is enabled in Docker Desktop settings.
+# The runner registers itself as: self-hosted, Linux, ARM64, eval
+# Workflows target it with:      runs-on: [self-hosted, Linux, ARM64, eval]
 
 services:
   runner:
-    image: ghcr.io/actions/actions-runner:latest
-    container_name: cuttle-runner
-    restart: unless-stopped
+    build:
+      context: ./runner
+      dockerfile: Dockerfile
+    image: github-runner-pi-cuttle:latest
+    container_name: pi-cuttle-runner
+    restart: always
     environment:
-      - RUNNER_REPOSITORY_URL=https://github.com/saman-mb/pi-cuttle
-      - RUNNER_TOKEN=${RUNNER_TOKEN}
-      - RUNNER_NAME=macos-arm64
-      - RUNNER_LABELS=self-hosted,macOS,ARM64
-      - RUNNER_GROUP=default
-    volumes:
-      # Persist runner configuration across restarts
-      - runner-data:/home/runner/_work
-    # The runner needs access to the host's llama.cpp server
-    # host.docker.internal is automatically available in Docker Desktop
+      - REPO_SLUG=saman-mb/pi-cuttle
+      - RUNNER_NAME=pi-cuttle-runner
+      - ACCESS_TOKEN=${GITHUB_PAT}
+      - RUNNER_WORKDIR=/tmp/runner-work
+      # GitHub normalizes these to Linux,ARM64; keep them in sync with the workflow.
+      - LABELS=self-hosted,linux,arm64,eval
+      - RUNNER_NO_UPDATE=1
+      # The container runs as root; the runner refuses that unless this is set.
+      - RUNNER_ALLOW_RUNASROOT=1
     extra_hosts:
+      # Lets the container reach the native llama.cpp server on the host.
       - "host.docker.internal:host-gateway"
+    volumes:
+      - runner-work:/tmp/runner-work
 
 volumes:
-  runner-data:
+  runner-work:
