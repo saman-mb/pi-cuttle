@@ -1,0 +1,46 @@
+name: Eval (Layer 2 — live decision model)
+
+# Deliberately NOT on pull_request: this repo is public, and a self-hosted
+# runner executes whatever code the checked-out ref contains — on your own Mac.
+on:
+  workflow_dispatch:            # run it manually any time
+  schedule:
+    - cron: "0 3 * * *"         # nightly
+
+concurrency:
+  group: live-eval
+  cancel-in-progress: false      # never let two jobs fight over one model server
+
+jobs:
+  live-eval:
+    # The runner is a Docker container on your Mac; it reaches the native
+    # llama.app server via host.docker.internal.
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 20
+    env:
+      # Docker → host: use host.docker.internal to reach the native server
+      PI_LIVE_EVAL_BASE_URL: http://host.docker.internal:9931/v1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Classifier host reachable?
+        run: |
+          curl -sf --max-time 5 "$PI_LIVE_EVAL_BASE_URL/models" >/dev/null \
+            || { echo "::error::classifier unreachable at $PI_LIVE_EVAL_BASE_URL"; exit 1; }
+
+      - name: Score the decision model against the corpus
+        run: npm run eval --live | tee live-eval.txt
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-eval
+          path: live-eval.txt

@@ -202,7 +202,7 @@ The clamped level is stored in router state and reused for continuations.
 
 | Flavor | Behavior |
 |---|---|
-| `cuttle/big-local` | Always local, **largest** model first. For orchestration work. |
+| `cuttle/big-local` | Always local, **largest** model first. Never routes to cloud; errors when local is unavailable. For orchestration work. |
 | `cuttle/orchestrator` | Quality-first. Lower effective cloud threshold for planning/delegation. |
 
 ### Local bias
