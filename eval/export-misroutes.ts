@@ -151,7 +151,12 @@ async function main() {
 	console.log(`Appended ${fixtures.length} misroute fixture(s) to ${outputPath}`);
 }
 
-main().catch((error) => {
-	console.error("Export failed:", error instanceof Error ? error.message : String(error));
-	process.exit(1);
-});
+// Only when run directly. Importing this module for its pure selection must not exit the process,
+// which is exactly what a missing-credentials run does — and what broke the test in CI.
+const isDirectRun = process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1]);
+if (isDirectRun) {
+	main().catch((error) => {
+		console.error("Export failed:", error instanceof Error ? error.message : String(error));
+		process.exit(1);
+	});
+}
