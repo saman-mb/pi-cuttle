@@ -150,10 +150,13 @@ test("local saturation spills to cloud", async () => {
 	assert.match(route.state?.decision.reason ?? "", /local full/);
 });
 
-test("looksLikeLocalFailure flags local providers and overflow errors", () => {
-	assert.equal(looksLikeLocalFailure("lmstudio", undefined), true);
-	assert.equal(looksLikeLocalFailure("opencode-go", "context_length_exceeded"), true);
-	assert.equal(looksLikeLocalFailure("opencode-go", "invalid api key"), false);
+test("looksLikeLocalFailure flags configured local providers and overflow errors", () => {
+	const localProviders = ["lmstudio", "llama.cpp", "ollama", "mtplx"];
+	assert.equal(looksLikeLocalFailure(localProviders, "lmstudio", undefined), true);
+	assert.equal(looksLikeLocalFailure(localProviders, "opencode-go", "context_length_exceeded"), true);
+	assert.equal(looksLikeLocalFailure(localProviders, "opencode-go", "invalid api key"), false);
+	assert.equal(looksLikeLocalFailure(localProviders, "vllm", "out of memory"), true, "unknown providers fall back to error regex");
+	assert.equal(looksLikeLocalFailure(["vllm"], "vllm", "ok"), true, "custom local provider is detected");
 });
 
 const EDIT_CALL = [

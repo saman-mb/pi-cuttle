@@ -144,8 +144,8 @@ function flavorBias(flavor: RouterFlavor): Tier | undefined {
 }
 
 /** True when a failed request looks like the local side fell over. */
-export function looksLikeLocalFailure(provider: string, errorMessage: string | undefined): boolean {
-	if (provider === "lmstudio" || provider === "llama.cpp" || provider === "ollama" || provider === "mtplx") return true;
+export function looksLikeLocalFailure(localProviders: readonly string[], provider: string, errorMessage: string | undefined): boolean {
+	if (localProviders.includes(provider)) return true;
 	return /out of memory|\boom\b|exceed|overload|timed? ?out|ECONNREFUSED|context_length_exceeded/i.test(errorMessage ?? "");
 }
 
@@ -240,7 +240,7 @@ export async function routeRequest(
 	if (request.reason === "retry" && request.failed) {
 		const failed = request.failed;
 		const cloudRef = firstResolvable(ctx, cloudCandidates(rt.config, ctx));
-		if (cloudRef && looksLikeLocalFailure(failed.model.provider, failed.message.errorMessage)) {
+		if (cloudRef && looksLikeLocalFailure(rt.config.local.providers, failed.model.provider, failed.message.errorMessage)) {
 			rt.governor.releaseOne(failed.model.id);
 			const next: RouterState = {
 				tier: "cloud",

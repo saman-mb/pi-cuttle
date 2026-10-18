@@ -32,6 +32,7 @@ export const DEFAULTS: RouterConfig = {
 		waitMs: 20_000,
 		slotDir: join(homedir(), ".pi", "agent", "pi-cuttle", "slots"),
 		staleSlotMs: 300_000,
+		providers: ["lmstudio", "llama.cpp", "ollama", "mtplx"],
 	},
 	telemetry: { enabled: true, path: join(homedir(), ".pi", "agent", "pi-cuttle", "decisions.jsonl"), pricing: {} },
 };

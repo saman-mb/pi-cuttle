@@ -78,6 +78,8 @@ export interface LocalConfig {
 	slotDir: string;
 	/** A slot older than this is considered abandoned and reaped. */
 	staleSlotMs: number;
+	/** Provider ids treated as local for retry-to-cloud decisions. */
+	providers: string[];
 }
 
 export interface TelemetryConfig {
