@@ -585,6 +585,33 @@ test("#112 (G): a direct request with a missing local ref rejects on big-local",
 	);
 });
 
+test("#112: a direct big-local request rejects when the governor refuses a slot", async () => {
+	const cfg = config();
+	const { rt } = runtime(cfg, false);
+	await assertRejectsWith(
+		() => routeRequest(rt, "big-local", { ...baseReq, reason: "direct" } as never, ctxWith()),
+		[/local-only/, /local full/],
+	);
+});
+
+test("#112: a direct big-local request rejects when the context exceeds the local window", async () => {
+	const cfg = config();
+	const { rt } = runtime(cfg);
+	await assertRejectsWith(
+		() => routeRequest(rt, "big-local", { ...baseReq, reason: "direct" } as never, ctxWith({ window: 1000, tokens: 999 })),
+		[/context exceeds local window/],
+	);
+});
+
+test("#112: a direct big-local request releases its granted reservation", async () => {
+	const cfg = config();
+	const { rt, released } = runtime(cfg);
+	const route = await routeRequest(rt, "big-local", { ...baseReq, reason: "direct" } as never, ctxWith());
+	assert.equal(route.model.provider, "lmstudio");
+	assert.equal(route.model.id, "local-model");
+	assert.ok(released.includes("local-model"), "direct requests release their local reservation immediately");
+});
+
 test("#112 (H): local.onFull=wait is forwarded to the governor and never falls back to cloud", async () => {
 	const cfg = config({ local: { ...DEFAULTS.local, onFull: "wait", waitMs: 20000 } });
 	const { rt, acquireCalls } = runtime(cfg, false); // governor refuses every slot

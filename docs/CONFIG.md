@@ -246,7 +246,7 @@ is filesystem-based.
 | `maxConcurrentPerModel` | number | `1` | Max concurrent requests per local model. |
 | `maxConcurrentByFlavor` | object | unset | Per-virtual-model budgets, e.g. `{ "local": 1, "fast-local": 1 }`. |
 | `onFull` | `"spill"` \| `"wait"` | `"spill"` | For `cuttle/auto`: route to cloud immediately, or wait for a slot. The always-local flavors (`cuttle/local`, `cuttle/fast-local`, `cuttle/big-local`) never spill; they error when local is unavailable. |
-| `waitMs` | number | `20000` | Wait budget before spilling when `onFull: "wait"`. |
+| `waitMs` | number | `20000` | Wait budget when `onFull: "wait"`. On timeout `cuttle/auto` spills to cloud; the always-local flavors error. |
 | `slotDir` | string | `~/.pi/agent/pi-cuttle/slots` | Where slot files live. `~` expands. |
 | `staleSlotMs` | number | `300000` | A slot older than this is reaped. |
 | `providers` | string[] | `["lmstudio", "llama.cpp", "ollama", "mtplx"]` | Provider ids treated as local for retry-to-cloud decisions. |

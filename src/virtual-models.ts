@@ -306,14 +306,21 @@ export async function routeRequest(
 	// Requests outside the agent loop (e.g. compaction summaries) use the deterministic tier.
 	if (request.reason === "direct") {
 		const tier = flavorBias(flavor) ?? "cloud";
-		const localRefs = tier === "local" ? localCandidates(rt.config, ctx, flavor) : [];
 		let ref: string | undefined;
 		if (tier === "local") {
-			ref = localOnly ? firstResolvable(ctx, localRefs) : pickLocal(rt.config, ctx, flavor);
+			if (localOnly) {
+				const reserved = await ensureLocalSlot(rt, ctx, flavor, sessionId, 0, true);
+				if (reserved.causes) throwLocalOnlyUnavailable(flavor, reserved.causes);
+				if (reserved.reservation) {
+					ref = reserved.ref;
+					rt.governor.release(reserved.reservation);
+				}
+			} else {
+				ref = pickLocal(rt.config, ctx, flavor);
+			}
 		} else {
 			ref = pickCloud(rt.config, ctx);
 		}
-		if (localOnly && !ref) throwLocalOnlyUnavailable(flavor, [missingLocalModelCause(localRefs)]);
 		const next: RouterState = localOnly
 			? {
 				tier: "local",
