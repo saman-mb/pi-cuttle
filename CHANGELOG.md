@@ -15,7 +15,8 @@ versions follow [SemVer](https://semver.org/).
   classifier and uses the heuristic. **The default has not changed**; `conversation` is opt-in.
 - **`classifier.contextShadow`** — when enabled, also classifies with the other signal source and
   records both verdicts (and whether they agreed) in the shadow log. Observability only: the
-  alternate verdict never routes and never delays a turn.
+  alternate verdict never influences routing, and the turn does not wait for it. It does cost one
+  extra classifier call and its compute when enabled, which is why it is off by default.
 - **Shadow records name their signal path** — `shadow.jsonl` entries gain an optional `signalPath`
   (`last-message`, `conversation`, `heuristic`, `off`). Older records without the field still read.
 - **12 thin-follow-up eval fixtures** — long context followed by a terse prompt whose correct tier

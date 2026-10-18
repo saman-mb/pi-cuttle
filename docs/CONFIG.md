@@ -14,7 +14,7 @@ Worked example: [`examples/pi-cuttle.example.json`](../examples/pi-cuttle.exampl
 
 ## Interactive config panel
 
-Run `/cuttle config` for a single searchable panel showing every knob with its current value:
+Run `/cuttle config` for a single searchable panel showing the routing knobs with their current values:
 
 - **Classifier model** — pick from pi's registered classifiers or unset (heuristic)
 - **Local catalog** — read-only; use `/cuttle models` to change
@@ -80,16 +80,32 @@ Setting `contextSource: "conversation"` sends a structured signal instead: the l
 message in full, the last `conversationWindow` assistant turns (role-tagged, each capped),
 a tool-usage digest, and session size — all inside `contextBudget`.
 
-The latest user message is never dropped in favour of history. If it alone exceeds the budget it
-is truncated to the budget; otherwise it is kept whole and older assistant turns are dropped
-first. Only text content is included — images and binary blocks are filtered out. The signal is
-deterministic, and a failure building it falls back to the `last-message` path with the reason
-logged, so the new path can never route worse than the default.
+The latest user message is never dropped in favour of history. Older assistant turns are dropped
+first when the budget is tight. Only text content is included — images and binary blocks are
+filtered out. The signal is deterministic.
+
+The path falls back to `last-message` (with the reason logged) when the formatter cannot produce
+usable context, and when the latest message alone is larger than `contextBudget` — so opting in
+never shows the classifier *less* text than the default would.
+
+**Known limitations of this signal** (do not read it as a strict improvement):
+
+- it includes recent **assistant** turns, but not earlier **user** requests — a follow-up like
+  "do the other thing" may still miss its referent when that referent was an earlier user message;
+- it omits tool *results* (only a usage digest), so the substance of a long tool output is not seen;
+- it has not been shown on real sessions to improve routing yet. That is exactly what
+  `contextShadow` exists to measure.
 
 **Rollout status.** `conversation` is **opt-in** and the default remains `last-message`. The
 default will only be changed after `contextShadow` comparison data from real sessions shows the
-conversation signal wins on terse follow-ups without regressing other cases. Until that evidence
-exists, no default has changed and this section is the accurate description of behaviour.
+conversation signal wins on terse follow-ups without regressing other cases. That evidence does
+**not** exist yet. Until it does, no default has changed, and no claim is made here that
+`conversation` routes better than `last-message`.
+
+**JSON-only for now.** The `contextSource`, `contextBudget`, `conversationWindow` and
+`contextShadow` fields are **not** editable through the `/cuttle config` panel in this release —
+set them in `pi-cuttle.json`. The panel shows the effective `contextSource` under `/cuttle status`
+instead of editing it.
 
 **Timing.** This changes only what the classifier is shown, never when it runs. Routing still
 decides once per user turn; with the default `policy.reclassify: "session"` the decision is taken
