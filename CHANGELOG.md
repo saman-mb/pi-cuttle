@@ -3,6 +3,22 @@
 All notable changes to this project. Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [SemVer](https://semver.org/).
 
+## [0.5.0] — 2026-10-18
+
+### Added
+
+- **`/cuttle config` panel** — a single searchable SettingsList showing all routing knobs at once:
+  classifier model (with submenu), policy mode (cycle), `local.maxConcurrent` (submenu), and
+  read-only catalog rows that point to `/cuttle models`. Enter cycles values or opens submenus;
+  Esc closes without writing. A committed change writes to the user config file and applies from
+  the next user turn (decide-once invariant).
+- **Shadow-section detection** — sections present in `<cwd>/.pi/pi-cuttle.json` are shown as
+  `SHADOWED: project file` and refuse edits from the panel, directing users to edit the project
+  file instead.
+- **Non-TUI fallback** — when `ctx.mode !== "tui"` or `ctx.ui.custom()` returns undefined,
+  `/cuttle config` prints the same seven values with effective sources, locks, unresolved
+  entries, and both config paths. Never claims a headless edit occurred.
+
 ## [0.4.0] — 2026-10-18
 
 ### Added
@@ -208,7 +224,8 @@ OpenAI-compatible host behind the same abstraction.
 - The heuristic scored 70.5% on the routing corpus (33 cloud prompts misrouted to
   local); rewritten as signal-based scoring, measured at 100% on the corpus (#43).
 
-[Unreleased]: https://github.com/saman-mb/pi-cuttle/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/saman-mb/pi-cuttle/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.5.0
 [0.4.0]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.4.0
 [0.3.1]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.3.1
 [0.2.1]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.2.1

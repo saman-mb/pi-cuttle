@@ -158,6 +158,7 @@ are moved to the new names automatically.
 /cuttle models       # pick the local, cloud, or decision model
 /cuttle policy       # complexity | cost | phase
 /cuttle limit        # max concurrent local requests
+/cuttle config       # interactive settings panel (TUI) or text view (non-TUI)
 /cuttle stats [days] # local share, tokens, estimated $ saved vs all-cloud
 /cuttle shadow-report [days] # phase-2 gate agreement (when gates are enabled)
 ```
