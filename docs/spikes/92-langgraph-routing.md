@@ -174,7 +174,7 @@ four-direct-awaits-median-ms 0.0008
 fresh-over-direct-ratio 748.53
 ```
 
-Read this in absolute terms as well as ratios. A fresh-path invoke median of 0.5614 ms, and a direct early-exit median of 0.3024 ms, will not dominate a model call. The printed ratio 748.53 is fresh-graph median divided by four empty awaits (0.0008 ms). Those awaits are a floor, not the current router. The useful comparison is: the graph tax is sub-millisecond, and it is still paid on the early-exit path (0.3024 ms median) where today's code returns before `decideTier`. A graph which pays a per-invoke cost on the common path is paying it on the fast path. That tax is not, by itself, a reason the router would become unusable.
+Read this in absolute terms as well as ratios. A fresh-path invoke median of 0.5614 ms, and a direct early-exit median of 0.3024 ms, will not dominate a model call. The printed ratio 748.53 was computed from unrounded medians; the printed rounded values 0.5614 / 0.0008 divide to ~702. Those awaits are a floor, not the current router. The useful comparison is: the graph tax is sub-millisecond, and it is still paid on the early-exit path (0.3024 ms median) where today's code returns before `decideTier`. A graph which pays a per-invoke cost on the common path is paying it on the fast path. That tax is not, by itself, a reason the router would become unusable.
 
 ### 4. API shape (from the prototype that ran)
 
@@ -448,7 +448,7 @@ try {
 }
 ```
 
-The same catch is at lines 434-440 (phase flip) and 485-490 (sticky). `held` is in the function's scope, next to the `return`. A graph runner that swallows that throw leaks a governor slot.
+The same catch is at lines 436-440 (phase flip) and 487-491 (sticky). `held` is in the function's scope, next to the `return`. A rewrite that stores the reservation only in graph state loses that closed-over `held` handle, so the release is lost if the runner is caught without it.
 
 Measured separately (`throw-probe.ts`, 33 lines): default `invoke()` did not swallow the throw. `emit` threw `Error: resolveModel failed`, and the error's own keys were `pregelTaskId` — not `held`. The closed-over flag stayed true only because the probe kept it outside graph state. A rewrite that stores the reservation only in graph state, and catches `invoke()` without that closed-over handle, has nothing to release. LangGraph did not provide the release. The current catch does.
 
@@ -499,9 +499,9 @@ Numbers are from this spike. The LangGraph column is the stub that ran, not an e
 - pi evaluates `./src/index.ts` with no build step. The installed closure is 22 packages, including `@langchain/core`, `zod`, `langsmith`, and `js-tiktoken`. Nothing in the probe tree-shook that.
 - `route()` at `src/virtual-models.ts:678` runs on every model request. The common path is the early-exit arms. Conditional edges can skip `decide`, and the direct stub still took 0.3024 ms median. That is small next to a model call, and it is not free.
 - `interrupt()` is the wrong shape for `route()`. It requires a checkpointer, throws `GraphInterrupt`, and resumes via `Command`. pi's `route()` must return `ModelRoute` or fail the request. There is no suspension hook. No pi fork.
-- Release-on-throw is lexical (`src/virtual-models.ts:649-653`, and the same catch at 434-440 and 485-490). The throw probe's error did not carry `held`. A naive graph rewrite drops that edge. A graph runner that swallows that throw leaks a governor slot.
+- Release-on-throw is lexical (`src/virtual-models.ts:649-653`, and the same catch at 436-440 and 487-491). The throw probe's error did not carry `held`. A naive graph rewrite drops that edge. A rewrite that stores the reservation only in graph state loses the closed-over `held` handle, so the release is lost if the runner is caught without that handle.
 
-**What would change the answer.** A second caller that actually needs a shared runner, together with an explicit decision to take a runtime dependency. Or pi growing a suspend/resume hook on `route()` that a checkpointer can host — not a fork proposed here. A faster `invoke()` would not change it: the measured invoke cost is already sub-millisecond, and the decision does not rest on that cost being unacceptable. "TS support is newer" would not change it either: 1.5.1 already typechecks here. Line count alone would not change it: 366 is already past 300, and the follow-up is an in-file extraction, not a library.
+**What would change the answer.** An additional production caller justifies the in-file extraction, not adopting the library — callers of `route()` already exist and are not a shared runner. The real trigger is an explicit decision to take a runtime dependency, plus pi growing a suspend/resume hook on `route()` that a checkpointer can host — not a fork proposed here. A faster `invoke()` would not change it: the measured invoke cost is already sub-millisecond, and the decision does not rest on that cost being unacceptable. "TS support is newer" would not change it either: 1.5.1 already typechecks here. Line count alone would not change it: 366 is already past 300, and the follow-up is an in-file extraction, not a library.
 
 ## Measurements that argue against rejecting on capability grounds
 

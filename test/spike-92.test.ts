@@ -26,6 +26,8 @@ test("the spike and the architecture note reject LangGraph with the same pinned 
 
 	assert.ok(spike.includes("@langchain/langgraph@1.5.1"));
 	assert.ok(spike.includes("## Decomposition plan (not a LangGraph migration)"));
+	assert.ok(spike.includes('.addNode("gate", gate)\n\t.addNode("decide", decide)\n\t.addNode("place", place)\n\t.addNode("emit", emit)'));
+	assert.ok(spike.includes("## Measurements that argue against rejecting on capability grounds"));
 	assert.ok(architecture.includes("## Decision: reject LangGraph (#92)"));
 	assert.ok(architecture.includes("spikes/92-langgraph-routing.md"));
 	assert.ok(architecture.includes("Invariants unchanged"));
