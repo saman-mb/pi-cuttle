@@ -22,6 +22,7 @@ export const DEFAULTS: RouterConfig = {
 		fallback: "heuristic",
 		timeoutMs: 4000,
 		contextSource: "last-message",
+		contextShadow: false,
 		contextBudget: 8192,
 		conversationWindow: 3,
 		stateChars: 16_000,
@@ -103,6 +104,7 @@ function mergeClassifier(base: RouterConfig["classifier"], patch: unknown): Rout
 	const classifier = mergeSection(base, patch);
 	if (!isRecord(patch)) return classifier;
 
+	if (typeof patch.contextShadow !== "boolean") classifier.contextShadow = base.contextShadow;
 	if (!["last-message", "conversation", "off"].includes(classifier.contextSource)) {
 		classifier.contextSource = "last-message";
 	}

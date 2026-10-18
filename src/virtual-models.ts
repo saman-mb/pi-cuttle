@@ -436,6 +436,8 @@ export async function routeRequest(
 		skipClassifier,
 		...(forced ? { forced } : {}),
 	});
+	const signalPath = decided.signalPath;
+	const shadowComparison = decided.shadowComparison;
 	if (decided.classifierFailure) {
 		rt.lastClassifierError = { ...decided.classifierFailure, turn: userTurn(request.messages), at: Date.now() };
 		rt.classifierFailures += 1;
@@ -507,8 +509,23 @@ export async function routeRequest(
 	}
 
 	rt.log?.(`route result tier=${tier} ref=${ref} thinking=${effectiveThinking} reasons=${reasons.join("; ")}`);
-	if (gatesActive(rt.config.gates)) {
-		appendShadow({ at: Date.now(), flavor, tier, source: decision.source, gates: decision.gates, reason: reasons.join("; ") });
+	if (gatesActive(rt.config.gates) || rt.config.classifier.contextShadow) {
+		const record = {
+			at: Date.now(),
+			flavor,
+			tier,
+			source: decision.source,
+			signalPath,
+			gates: decision.gates,
+			// Keep the ledger metadata-only, even if a classifier error echoes its input.
+			reason: `${decision.source} decision`,
+		};
+		if (shadowComparison) {
+			// Never wait for the alternate classifier: it is observability only and may time out.
+			void shadowComparison.then((paired) => appendShadow({ ...record, ...(paired ? { paired } : {}) }));
+		} else {
+			appendShadow(record);
+		}
 	}
 	const next: RouterState = {
 		tier,

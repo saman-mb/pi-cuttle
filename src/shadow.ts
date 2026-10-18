@@ -11,7 +11,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { dataDir, shadowLogPath } from "./config.ts";
-import type { Decision, GateVerdicts, Tier } from "./types.ts";
+import type { Decision, GateVerdicts, PairedSignalVerdicts, SignalPath, Tier } from "./types.ts";
 
 let logPath = shadowLogPath();
 
@@ -29,6 +29,10 @@ export interface ShadowRecord {
 	tier: Tier;
 	/** Source of the tier decision (classifier/heuristic/pin). */
 	source: Decision["source"];
+	/** Signal path used to produce the classifier verdict, when applicable. */
+	signalPath?: SignalPath;
+	/** Optional non-authoritative comparison with the other signal source. */
+	paired?: PairedSignalVerdicts;
 	/** Gate verdicts returned by the classifier, if any. */
 	gates?: GateVerdicts;
 	/** Reason string from the routing decision. */

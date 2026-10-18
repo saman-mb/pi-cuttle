@@ -28,6 +28,8 @@ export interface ClassifierConfig {
 	timeoutMs: number;
 	/** Source of the classifier prompt; defaults to the most recent user message. */
 	contextSource: "last-message" | "conversation" | "off";
+	/** Compare the alternate signal path in shadow mode without affecting routing. */
+	contextShadow: boolean;
 	/** Character budget for formatted conversation context. */
 	contextBudget: number;
 	/** Number of recent assistant turns included in conversation context. */
@@ -249,6 +251,14 @@ export interface GateVerdicts {
 	role?: GateAnswer & { shadow: boolean };
 	judge?: GateAnswer & { shadow: boolean };
 	struggle?: GateAnswer & { shadow: boolean };
+}
+
+export type SignalPath = "last-message" | "conversation" | "heuristic" | "off";
+
+export interface PairedSignalVerdicts {
+	authoritative: { signalPath: "last-message" | "conversation"; tier: Tier };
+	alternate: { signalPath: "last-message" | "conversation"; tier: Tier };
+	agree: boolean;
 }
 
 export interface Decision {
