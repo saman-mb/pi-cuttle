@@ -315,7 +315,11 @@ test("formatter failure or empty signal falls back to last-message and is report
 		assert.equal(receivedPrompt, prompt.slice(0, 9));
 		assert.equal(decision.source, "classifier");
 		assert.match(decision.reason, expectedFailure);
-		assert.match(decision.classifierFailure?.message ?? "", expectedFailure);
+		// A context-path fallback must NOT be reported as a classifier failure: the classifier
+		// answered correctly, it was simply shown a different signal. Reporting it as a failure
+		// would let repeated fallbacks (an oversized message, say) trip classifier backoff and
+		// skip the classifier for a session that was never failing. (#103 integration board nit)
+		assert.equal(decision.classifierFailure, undefined, "context fallback is not a classifier failure");
 		assert.match(logs.join("\n"), /falling back to last-message/);
 	}
 });
