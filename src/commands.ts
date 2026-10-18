@@ -21,6 +21,8 @@ import {
 } from "./config-ui.ts";
 import { LangFuseClient } from "./langfuse.ts";
 import { splitRef } from "./classifier.ts";
+import { statusDelegationLines } from "./delegation-guard.ts";
+import type { DelegationGuard } from "./delegation-guard.ts";
 import { formatStats, Telemetry } from "./telemetry.ts";
 import type { Telemetry as TelemetryType } from "./telemetry.ts";
 import { computeAgreement, formatAgreement, readShadow } from "./shadow.ts";
@@ -216,6 +218,8 @@ export function buildStatusLines(input: {
 	loaded: LoadedConfig;
 	effectiveChars: number;
 	governor: GovernorStatus;
+	/** The #130 delegation guard, when one is armed. Renders nothing when it has seen nothing. */
+	delegation?: DelegationGuard;
 }): string[] {
 	const { rt, loaded, effectiveChars, governor } = input;
 	const lines = [
@@ -229,6 +233,9 @@ export function buildStatusLines(input: {
 		`local:    ${governor.slots.length}/${governor.localMax} slots used`,
 		`config:   ${loaded.sources.join(" -> ") || "(defaults only)"}`,
 	];
+	// #130: a blocked delegation is otherwise invisible in the panel — the child never ran, so there
+	// is no tool result and no routing trace to look back at. Counts only; detail goes to the log.
+	lines.push(...statusDelegationLines(input.delegation));
 	if (rt.lastClassifierError) {
 		const failure = rt.lastClassifierError;
 		lines.push(`failure:  turn ${failure.turn} ${failure.ref} \u2014 ${oneLine(failure.message)}`);
@@ -237,9 +244,20 @@ export function buildStatusLines(input: {
 	return lines;
 }
 
-async function status(rt: RouterRuntime, loaded: LoadedConfig, ctx: ExtensionCommandContext): Promise<void> {
+async function status(
+	rt: RouterRuntime,
+	loaded: LoadedConfig,
+	ctx: ExtensionCommandContext,
+	delegation?: DelegationGuard,
+): Promise<void> {
 	const governor = await rt.governor.status();
-	const lines = buildStatusLines({ rt, loaded, effectiveChars: rt.config.classifier.stateChars, governor });
+	const lines = buildStatusLines({
+		rt,
+		loaded,
+		effectiveChars: rt.config.classifier.stateChars,
+		governor,
+		...(delegation ? { delegation } : {}),
+	});
 	ctx.ui.notify(lines.join("\n"), "info");
 }
 
@@ -537,7 +555,13 @@ export async function showConfigPanel(rt: RouterRuntime, ctx: ExtensionCommandCo
 	}
 }
 
-export function registerCuttleCommand(pi: ExtensionAPI, rt: RouterRuntime, loaded: LoadedConfig, telemetry: TelemetryType): void {
+export function registerCuttleCommand(
+	pi: ExtensionAPI,
+	rt: RouterRuntime,
+	loaded: LoadedConfig,
+	telemetry: TelemetryType,
+	delegation?: DelegationGuard,
+): void {
 	pi.registerCommand("cuttle", {
 		description: "Toggle and inspect local/cloud model routing",
 		handler: async (args, ctx) => {
@@ -599,7 +623,7 @@ export function registerCuttleCommand(pi: ExtensionAPI, rt: RouterRuntime, loade
 			if (sub === "why") return why(rt, ctx);
 			if (sub === "export-misroutes") return exportMisroutes(rt, ctx, extra);
 			if (sub === "config") return showConfigPanel(rt, ctx, loaded);
-			return status(rt, loaded, ctx);
+			return status(rt, loaded, ctx, delegation);
 		},
 	});
 }

@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-import type { ObservabilityConfig, RouterConfig } from "./types.ts";
+import { DEFAULT_DELEGATION_MODE, DELEGATION_MODES, type DelegationMode, type ObservabilityConfig, type RouterConfig } from "./types.ts";
 
 const MAX_CONTEXT_BUDGET = 64_000;
 
@@ -56,6 +56,7 @@ export const DEFAULTS: RouterConfig = {
 		staleSlotMs: 300_000,
 		providers: ["lmstudio", "llama.cpp", "ollama", "mtplx"],
 	},
+	delegation: { mode: DEFAULT_DELEGATION_MODE },
 	telemetry: { enabled: true, path: join(homedir(), ".pi", "agent", "pi-cuttle", "decisions.jsonl"), pricing: {} },
 	capabilities: {},
 };
@@ -100,6 +101,19 @@ export function mergePolicy(base: RouterConfig["policy"], patch: unknown): Route
 	} as RouterConfig["policy"];
 }
 
+/**
+ * Merge the `delegation` section (#130). Unknown or non-string modes resolve to the shipped
+ * default, and a section that is not an object is ignored — a typo in this file must not turn the
+ * local-only guarantee off by accident.
+ */
+export function mergeDelegation(base: RouterConfig["delegation"], patch: unknown): RouterConfig["delegation"] {
+	const fallback = { mode: DEFAULT_DELEGATION_MODE };
+	if (!isRecord(patch)) return base ?? fallback;
+	const merged = { ...(base ?? fallback), ...patch };
+	const mode = merged.mode;
+	return { mode: DELEGATION_MODES.includes(mode as DelegationMode) ? (mode as DelegationMode) : DEFAULT_DELEGATION_MODE };
+}
+
 function mergeClassifier(base: RouterConfig["classifier"], patch: unknown): RouterConfig["classifier"] {
 	const classifier = mergeSection(base, patch);
 	if (!isRecord(patch)) return classifier;
@@ -131,6 +145,7 @@ export function applyOverrides(config: RouterConfig, parsed: unknown): RouterCon
 		policy: mergePolicy(config.policy, parsed.policy),
 		local: mergeSection(config.local, parsed.local),
 		telemetry: mergeSection(config.telemetry, parsed.telemetry),
+		delegation: mergeDelegation(config.delegation, parsed.delegation),
 		observability: isRecord(parsed.observability) ? (parsed.observability as unknown as ObservabilityConfig) : config.observability,
 		gates: mergeSection(config.gates ?? {}, parsed.gates),
 		capabilities: mergeSection(config.capabilities ?? {}, parsed.capabilities),
