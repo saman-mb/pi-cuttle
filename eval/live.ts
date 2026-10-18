@@ -23,6 +23,19 @@ import type { RouterConfig, Tier } from "../src/types.ts";
 import { formatResult, parseCorpus, scoreCorpus } from "./score.ts";
 import type { EvalEntry, EvalResult } from "./score.ts";
 
+/**
+ * Classifier accuracy floor. The measured baseline (2026-10-18) is 93.8% on the
+ * heuristic-tuned corpus. This is a regression tripwire, not a quality bar — the
+ * corpus is biased toward the heuristic, so the number is not a generalisation test.
+ * Raise this when a better classifier lands; lower it only if the corpus changes.
+ */
+export const CLASSIFIER_ACCURACY_FLOOR = 0.90;
+
+/** Check if a report meets the floor. Exported for testing. */
+export function meetsFloor(report: LiveEvalReport): boolean {
+	return report.classifier.accuracy >= CLASSIFIER_ACCURACY_FLOOR;
+}
+
 export interface LiveClassifierRegistry {
 	classify(
 		model: ClassifierModel<ClassifierApi>,
@@ -238,6 +251,13 @@ export async function runLiveEvalCli(): Promise<void> {
 		const report = await runLiveEval({ ref, model, registry, config });
 		console.log(formatLiveReport(report));
 		console.log(`\nclassifier resolution: ${source}${source === "direct" ? ` (${model.baseUrl})` : ""}`);
+
+		if (!meetsFloor(report)) {
+			console.error(
+				`\nclassifier accuracy ${(report.classifier.accuracy * 100).toFixed(1)}% is below the ${CLASSIFIER_ACCURACY_FLOOR * 100}% floor`,
+			);
+			process.exitCode = 1;
+		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		console.error(`Live classifier eval failed: ${message}`);

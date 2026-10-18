@@ -27,6 +27,15 @@ versions follow [SemVer](https://semver.org/).
 - **`/cuttle config` docs corrected**: a config change applies from the next routing decision — a
   new session, or the next user turn when `policy.reclassify` is `"turn"` — not "the next turn".
 
+## [0.5.1] — 2026-10-18
+
+### Fixed
+
+- **Always-local flavors no longer route to cloud.** `cuttle/local`, `cuttle/fast-local`, and
+  `cuttle/big-local` are hard-pinned to local: when local is genuinely unavailable they now
+  fail with a clear, actionable error naming the cause and remedy instead of silently routing
+  the turn to cloud. `cuttle/auto` keeps its documented `local.onFull` spill behaviour (#112).
+
 ## [0.5.0] — 2026-10-18
 
 ### Added
@@ -267,7 +276,8 @@ OpenAI-compatible host behind the same abstraction.
 - The heuristic scored 70.5% on the routing corpus (33 cloud prompts misrouted to
   local); rewritten as signal-based scoring, measured at 100% on the corpus (#43).
 
-[Unreleased]: https://github.com/saman-mb/pi-cuttle/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/saman-mb/pi-cuttle/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.5.1
 [0.5.0]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.5.0
 [0.4.0]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.4.0
 [0.3.1]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.3.1

@@ -182,6 +182,28 @@ function flavorBias(flavor: RouterFlavor): Tier | undefined {
 	return undefined;
 }
 
+/** Flavors that promise never to route a request to a cloud model. */
+export function isLocalOnlyFlavor(flavor: RouterFlavor): boolean {
+	return flavor === "local" || flavor === "fast-local" || flavor === "big-local";
+}
+
+function missingLocalModelCause(refs: readonly string[]): string {
+	return `local model not in pi's catalog: ${refs.length > 0 ? refs.join(", ") : "no refs configured"} (check catalog.local)`;
+}
+
+function throwLocalOnlyUnavailable(flavor: RouterFlavor, causes: readonly string[]): never {
+	const cause = causes.length > 0 ? causes.join("; ") : missingLocalModelCause([]);
+	const remedies = new Set<string>();
+	for (const item of causes) {
+		if (item === "local full") remedies.add("raise local.maxConcurrent (or the per-model/per-flavor caps)");
+		else if (item === "context exceeds local window") remedies.add("use a local model with a larger context window");
+		else if (item.startsWith("local model not in pi's catalog:")) remedies.add("add or fix a resolvable catalog.local entry");
+		else if (item.startsWith("local provider failure:")) remedies.add("repair local availability");
+	}
+	if (remedies.size === 0) remedies.add("repair local availability");
+	throw new Error(`pi-cuttle: cuttle/${flavor} is local-only; local model unavailable: ${cause}. Fix: ${[...remedies].join("; ")}. To permit cloud routing, select cuttle/auto.`);
+}
+
 /** True when a failed request looks like the local side fell over. */
 export function looksLikeLocalFailure(localProviders: readonly string[], provider: string, errorMessage: string | undefined): boolean {
 	if (localProviders.includes(provider)) return true;
@@ -212,9 +234,12 @@ async function ensureLocalSlot(
 	flavor: RouterFlavor,
 	sessionId: string,
 	score = 0,
-): Promise<{ spill?: string; reservation?: Reservation; ref?: string }> {
+	localOnly = false,
+): Promise<{ spill?: string; causes?: string[]; reservation?: Reservation; ref?: string }> {
 	const candidates = localCandidates(rt.config, ctx, flavor, score);
-	if (candidates.length === 0) return { spill: "no local model configured" };
+	if (candidates.length === 0) {
+		return localOnly ? { causes: [missingLocalModelCause(candidates)] } : { spill: "no local model configured" };
+	}
 	const unresolvable: string[] = [];
 	let sawContextOverflow = false;
 	let sawCapacity = false;
@@ -234,7 +259,11 @@ async function ensureLocalSlot(
 			continue;
 		}
 		// Slots are keyed by bare model id to match assistant message attribution.
-		const reservation = await rt.governor.acquire(parsed.id, { sessionId, flavor });
+		const reservation = await rt.governor.acquire(parsed.id, {
+			sessionId,
+			flavor,
+			...(rt.config.local.onFull === "wait" ? { waitMs: rt.config.local.waitMs } : {}),
+		});
 		if (reservation) return { reservation, ref };
 		sawCapacity = true;
 	}
@@ -244,6 +273,9 @@ async function ensureLocalSlot(
 	}
 	if (sawContextOverflow) reasons.push("context exceeds local window");
 	if (sawCapacity) reasons.push("local full");
+	if (localOnly) {
+		return { causes: reasons.length > 0 ? reasons : [missingLocalModelCause(candidates)] };
+	}
 	return { spill: reasons.length > 0 ? `${reasons.join("; ")}, spilled to cloud` : "spilled to cloud" };
 }
 
@@ -264,6 +296,7 @@ export async function routeRequest(
 	const sessionId = ctx.sessionManager.getSessionId();
 	const state = request.state;
 	const phase = state?.phase ?? detectPhase(request.messages) ?? "planning";
+	const localOnly = isLocalOnlyFlavor(flavor);
 
 	// Compute effective thinking level. If state has a clamped level from a prior turn,
 	// reuse it for continuity; otherwise compute fresh from the user's selection.
@@ -273,17 +306,43 @@ export async function routeRequest(
 	}
 
 	// Requests outside the agent loop (e.g. compaction summaries) use the deterministic tier.
+	// Direct requests deliberately skip the governor and the context guard: pi routes them
+	// through `modelRegistry.streamSimple()` (docs/virtual-models.md: "direct" = compaction
+	// summary or an extension calling streamSimple) and there is no completion hook to release
+	// a held slot — holding one would block every later local request until stale reaping.
+	// Compaction is also the safety valve that *reduces* context, so gating it on the local
+	// window would reject the request that fixes the overflow. The local-only guarantee still
+	// holds; only capacity/context gating is skipped (pre-existing behaviour, see #119).
 	if (request.reason === "direct") {
 		const tier = flavorBias(flavor) ?? "cloud";
-		const ref = tier === "local" ? pickLocal(rt.config, ctx, flavor) : pickCloud(rt.config, ctx);
-		const next: RouterState =
-			state ?? { tier, modelId: ref ?? "", phase, decision: { source: "pin", reason: "direct request" } };
+		const localRefs = tier === "local" ? localCandidates(rt.config, ctx, flavor) : [];
+		let ref: string | undefined;
+		if (tier === "local") {
+			ref = localOnly ? firstResolvable(ctx, localRefs) : pickLocal(rt.config, ctx, flavor);
+		} else {
+			ref = pickCloud(rt.config, ctx);
+		}
+		if (localOnly && !ref) throwLocalOnlyUnavailable(flavor, [missingLocalModelCause(localRefs)]);
+		const next: RouterState = localOnly
+			? {
+				tier: "local",
+				modelId: ref ?? "",
+				phase,
+				...(state?.thinkingLevel ? { thinkingLevel: state.thinkingLevel } : {}),
+				decision: state?.decision ?? { source: "pin", reason: "direct request" },
+			}
+			: state ?? { tier, modelId: ref ?? "", phase, decision: { source: "pin", reason: "direct request" } };
 		return resolveModel(ctx, ref, effectiveThinking, next);
 	}
 
 	// #11: a retry may switch models. Local failures and overflow-style errors go to cloud.
 	if (request.reason === "retry" && request.failed) {
 		const failed = request.failed;
+		if (localOnly) {
+			rt.governor.releaseOne(failed.model.id);
+			const errorMessage = failed.message.errorMessage ?? "unknown error";
+			throwLocalOnlyUnavailable(flavor, [`local provider failure: ${failed.model.provider} (${errorMessage})`]);
+		}
 		const cloudRef = firstResolvable(ctx, cloudCandidates(rt.config, ctx));
 		if (cloudRef && looksLikeLocalFailure(rt.config.local.providers, failed.model.provider, failed.message.errorMessage)) {
 			rt.governor.releaseOne(failed.model.id);
@@ -316,7 +375,7 @@ export async function routeRequest(
 		cleanStreak >= escalateCfg.cleanTurns;
 	const reclassify = (rt.config.policy.reclassify === "turn" || recovering || deescalating) && request.reason === "user";
 	if (state && !reclassify) {
-		if (escalateCfg?.enabled && state.tier === "local" && signals.errors >= escalateCfg.toolErrors) {
+		if (!localOnly && escalateCfg?.enabled && state.tier === "local" && signals.errors >= escalateCfg.toolErrors) {
 			const cloudRef = firstResolvable(ctx, cloudCandidates(rt.config, ctx));
 			if (cloudRef) {
 					rt.governor.releaseOne(splitRef(state.modelId)?.id ?? "");
@@ -336,7 +395,7 @@ export async function routeRequest(
 			}
 		}
 
-		if (state.tier === "cloud" && state.escalatedFrom && request.reason === "user") {
+		if (!localOnly && state.tier === "cloud" && state.escalatedFrom && request.reason === "user") {
 			const nextClean = signals.errors === 0 ? cleanStreak : 0;
 			if (nextClean !== (state.cleanTurns ?? 0)) {
 				const next: RouterState = { ...state, cleanTurns: nextClean };
@@ -352,12 +411,13 @@ export async function routeRequest(
 					{ tier: state.tier, score: state.decision.score ?? 0, source: state.decision.source, reason: state.decision.reason },
 					detected,
 				);
-				let tier = flipped.tier;
+				let tier = localOnly ? "local" : flipped.tier;
 				const reason = `${flipped.reason}; phase -> ${detected}`;
 				let held: Reservation | undefined;
 				let flippedRef: string | undefined;
-				if (tier === "local" && state.tier !== "local") {
-					const reserved = await ensureLocalSlot(rt, ctx, flavor, sessionId, state.decision.score ?? 0);
+				if (localOnly || (tier === "local" && state.tier !== "local")) {
+					const reserved = await ensureLocalSlot(rt, ctx, flavor, sessionId, state.decision.score ?? 0, localOnly);
+					if (localOnly && reserved.causes) throwLocalOnlyUnavailable(flavor, reserved.causes);
 					if (reserved.spill) tier = "cloud";
 					else {
 						held = reserved.reservation;
@@ -383,11 +443,12 @@ export async function routeRequest(
 		}
 		let ref: string | undefined;
 		let held: Reservation | undefined;
-		let effectiveTier: Tier = state.tier;
+		let effectiveTier: Tier = localOnly ? "local" : state.tier;
 		let reasonSuffix: string | undefined;
 
-		if (state.tier === "local") {
-			const reserved = await ensureLocalSlot(rt, ctx, flavor, sessionId, state.decision.score ?? 0);
+		if (localOnly || state.tier === "local") {
+			const reserved = await ensureLocalSlot(rt, ctx, flavor, sessionId, state.decision.score ?? 0, localOnly);
+			if (localOnly && reserved.causes) throwLocalOnlyUnavailable(flavor, reserved.causes);
 			if (reserved.ref) {
 				held = reserved.reservation;
 				ref = reserved.ref;
@@ -396,10 +457,10 @@ export async function routeRequest(
 				reasonSuffix = reserved.spill;
 			}
 		}
-		if (!ref) {
+		if (!ref && !localOnly) {
 			ref = firstResolvable(ctx, cloudCandidates(rt.config, ctx, state.decision.score ?? 0));
 		}
-		if (!ref) {
+		if (!ref && !localOnly) {
 			const fallback = await ensureLocalSlot(rt, ctx, flavor, sessionId, state.decision.score ?? 0);
 			if (fallback.ref) {
 				held = fallback.reservation;
@@ -408,9 +469,19 @@ export async function routeRequest(
 				reasonSuffix = "cloud catalog unavailable, routed local";
 			}
 		}
-		if (!ref) throw new Error("pi-cuttle: no configured model resolves (check catalog.local/cloud)");
-		const next: RouterState =
-			effectiveTier === state.tier
+		if (!ref) {
+			if (localOnly) throwLocalOnlyUnavailable(flavor, [missingLocalModelCause(localCandidates(rt.config, ctx, flavor))]);
+			throw new Error("pi-cuttle: no configured model resolves (check catalog.local/cloud)");
+		}
+		const next: RouterState = localOnly
+			? {
+				tier: "local",
+				modelId: ref,
+				phase: state.phase,
+				...(state.thinkingLevel ? { thinkingLevel: state.thinkingLevel } : {}),
+				decision: state.decision,
+			}
+			: effectiveTier === state.tier
 				? state
 				: { ...state, tier: effectiveTier, modelId: ref, ...(state.thinkingLevel ? { thinkingLevel: state.thinkingLevel } : {}), decision: { ...state.decision, reason: `${state.decision.reason}; ${reasonSuffix}` } };
 		try {
@@ -453,13 +524,15 @@ export async function routeRequest(
 	}
 	const decision = applyPolicy(rt.config, decided, phase);
 
-	let tier: Tier = decision.tier;
+	let tier: Tier = localOnly ? "local" : decision.tier;
 	const reasons: string[] = [decision.reason];
+	if (localOnly && decision.tier === "cloud") reasons.push("local-only flavor");
 
 	let held: Reservation | undefined;
 	let localRef: string | undefined;
 	if (tier === "local") {
-		const reserved = await ensureLocalSlot(rt, ctx, flavor, sessionId, decision.score);
+		const reserved = await ensureLocalSlot(rt, ctx, flavor, sessionId, decision.score, localOnly);
+		if (localOnly && reserved.causes) throwLocalOnlyUnavailable(flavor, reserved.causes);
 		if (reserved.spill) {
 			tier = "cloud";
 			reasons.push(reserved.spill);
@@ -585,7 +658,7 @@ const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as 
 
 const FLAVORS: { id: RouterFlavor; name: string }[] = [
 	{ id: "auto", name: "Auto (local/cloud)" },
-	{ id: "local", name: "Local preferred" },
+	{ id: "local", name: "Local only" },
 	{ id: "cloud", name: "Cloud only" },
 	{ id: "fast-local", name: "Fast local" },
 	{ id: "big-local", name: "Big local" },

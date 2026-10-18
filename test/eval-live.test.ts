@@ -12,8 +12,10 @@ import type {
 import { buildQuestions } from "../src/classifier.ts";
 import { DEFAULTS } from "../src/config.ts";
 import {
+	CLASSIFIER_ACCURACY_FLOOR,
 	directClassifierModel,
 	formatLiveReport,
+	meetsFloor,
 	runLiveEval,
 	type LiveClassifierRegistry,
 } from "../eval/live.ts";
@@ -133,4 +135,30 @@ test("the direct fallback builds a descriptor pi's llama-cpp classifier accepts 
 	assert.equal(model.id, "org/model:Q8_0");
 	assert.equal(model.baseUrl, "http://127.0.0.1:9931/v1");
 	assert.ok(model.contextWindow > 0);
+});
+
+/**
+ * Floor enforcement is the CI gate: a classifier regression that drops accuracy
+ * below the floor must fail the job. The floor is a regression tripwire, not a
+ * quality bar — the corpus is tuned for the heuristic, so 93.8% is the current
+ * baseline and 0.90 catches a meaningful drop.
+ */
+test("meetsFloor returns true when classifier accuracy is at or above the floor", () => {
+	const report = {
+		ref: "llama.cpp/test/model",
+		model,
+		classifier: { total: 100, correct: 90, accuracy: CLASSIFIER_ACCURACY_FLOOR, confusion: { localLocal: 0, localCloud: 0, cloudLocal: 0, cloudCloud: 0 }, misses: [] },
+		heuristic: { total: 100, correct: 100, accuracy: 1, confusion: { localLocal: 0, localCloud: 0, cloudLocal: 0, cloudCloud: 0 }, misses: [] },
+	};
+	assert.equal(meetsFloor(report), true);
+});
+
+test("meetsFloor returns false when classifier accuracy is below the floor", () => {
+	const report = {
+		ref: "llama.cpp/test/model",
+		model,
+		classifier: { total: 100, correct: 89, accuracy: CLASSIFIER_ACCURACY_FLOOR - 0.01, confusion: { localLocal: 0, localCloud: 0, cloudLocal: 0, cloudCloud: 0 }, misses: [] },
+		heuristic: { total: 100, correct: 100, accuracy: 1, confusion: { localLocal: 0, localCloud: 0, cloudLocal: 0, cloudCloud: 0 }, misses: [] },
+	};
+	assert.equal(meetsFloor(report), false);
 });
