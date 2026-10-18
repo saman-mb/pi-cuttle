@@ -53,6 +53,8 @@ export interface RouterRuntime {
 		thinkingLevel: string;
 		reason: string;
 		source: string;
+		/** Which signal the classifier was given (#108). Absent when no classifier ran. */
+		signalPath?: "last-message" | "conversation" | "heuristic" | "off";
 		score?: number;
 		subagent: boolean;
 		at: number;
@@ -543,6 +545,7 @@ export async function routeRequest(
 		thinkingLevel: effectiveThinking,
 		reason: reasons.join("; "),
 		source: decision.source,
+		signalPath,
 		score: decision.score,
 		subagent: isSubagent(),
 		at: Date.now(),
