@@ -78,6 +78,21 @@ function runtime(
 
 const baseReq = { model: { id: "auto" }, thinkingLevel: "high" as const, messages: USER };
 
+/** A fake Langfuse client that records score calls and can be told to fail. */
+function fakeLangfuse(fail = false): { scoreCalls: unknown[]; client: { trace: () => Promise<void>; score: (e: unknown) => Promise<void> } } {
+	const scoreCalls: unknown[] = [];
+	return {
+		scoreCalls,
+		client: {
+			trace: () => Promise.resolve(),
+			score: (entry) => {
+				scoreCalls.push(entry);
+				return fail ? Promise.reject(new Error("langfuse down")) : Promise.resolve();
+			},
+		},
+	};
+}
+
 test("sticky: a continuation keeps the previous state and holds a local slot", async () => {
 	const cfg = config();
 	const { rt, acquired } = runtime(cfg);
@@ -616,4 +631,42 @@ test("#112 (H): local.onFull=wait is forwarded to the governor and never falls b
 	assert.equal(acquireCalls.length, 1, "the governor was asked exactly once");
 	assert.equal(acquireCalls[0]?.waitMs, 20000, "the wait budget was forwarded");
 	assert.equal(acquireCalls[0]?.flavor, "big-local");
+});
+
+test("#132: a local-only routing decision emits flavor_compliance", async () => {
+	for (const flavor of ["local", "fast-local", "big-local"] as const) {
+		const { rt } = runtime(config());
+		const fake = fakeLangfuse();
+		rt.langfuse = fake.client as never;
+		await routeRequest(rt, flavor, { ...baseReq, reason: "user" } as never, ctxWith());
+		const compliance = fake.scoreCalls.find((c) => (c as { name: string }).name === "flavor_compliance") as
+			| { value: boolean; dataType: string; traceId: string }
+			| undefined;
+		assert.ok(compliance, `${flavor} emits flavor_compliance`);
+		assert.equal(compliance.value, true, `${flavor} served locally is compliant`);
+		assert.equal(compliance.dataType, "BOOLEAN");
+		assert.ok(compliance.traceId.length > 0, "scored against a trace id");
+	}
+});
+
+test("#132: non-local-only flavors emit no flavor_compliance score", async () => {
+	for (const flavor of ["auto", "cloud", "orchestrator"] as const) {
+		const { rt } = runtime(config());
+		const fake = fakeLangfuse();
+		rt.langfuse = fake.client as never;
+		await routeRequest(rt, flavor, { ...baseReq, reason: "user" } as never, ctxWith());
+		assert.equal(
+			fake.scoreCalls.filter((c) => (c as { name: string }).name === "flavor_compliance").length,
+			0,
+			`${flavor} emits no flavor_compliance`,
+		);
+	}
+});
+
+test("#132: a failing score never breaks the turn", async () => {
+	const { rt } = runtime(config());
+	const fake = fakeLangfuse(true);
+	rt.langfuse = fake.client as never;
+	const model = await routeRequest(rt, "local", { ...baseReq, reason: "user" } as never, ctxWith());
+	assert.ok(model, "the turn resolves even when scoring fails");
 });

@@ -18,9 +18,12 @@ function startMockLangFuseServer(): Promise<{ url: string; server: ReturnType<ty
 			if (req.url === "/api/public/health") {
 				res.writeHead(200, { "Content-Type": "application/json" });
 				res.end(JSON.stringify({ status: "ok" }));
-			} else if (req.url === "/api/public/traces") {
+			} else if (req.url === "/api/public/traces" || req.url === "/api/public/scores") {
 				res.writeHead(200, { "Content-Type": "application/json" });
 				res.end(JSON.stringify({ id: "trace-1" }));
+			} else if (req.url?.startsWith("/api/public/scores?")) {
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ data: [{ name: "flavor_compliance", value: false, dataType: "BOOLEAN" }] }));
 			} else {
 				res.writeHead(404);
 				res.end("not found");
@@ -138,5 +141,61 @@ describe("LangFuseClient", () => {
 		});
 		const ok = await client.health();
 		assert.equal(ok, false);
+	});
+
+	it("ingests a score by trace id via POST /api/public/scores", async () => {
+		const { url, server, requests } = await startMockLangFuseServer();
+		try {
+			const client = new LangFuseClient({
+				enabled: true,
+				provider: "langfuse",
+				baseUrl: url,
+				publicKey: "pk-test",
+				secretKey: "sk-test",
+			});
+			await client.score({
+				traceId: "trace-1",
+				name: "flavor_compliance",
+				value: false,
+				dataType: "BOOLEAN",
+			});
+
+			assert.equal(requests.length, 1);
+			const req = requests[0] as { method: string; url: string; headers: Record<string, string>; body: Record<string, unknown> };
+			assert.equal(req.method, "POST");
+			assert.equal(req.url, "/api/public/scores");
+			assert.equal(req.body.traceId, "trace-1");
+			assert.equal(req.body.id, "trace-1-flavor_compliance", "a score without an id is silently dropped");
+			assert.equal(req.body.name, "flavor_compliance");
+			assert.equal(req.body.value, false);
+			assert.equal(req.body.dataType, "BOOLEAN");
+			assert.equal(req.headers.authorization, `Basic ${Buffer.from("pk-test:sk-test").toString("base64")}`);
+		} finally {
+			server.closeAllConnections();
+			server.close();
+		}
+	});
+
+	it("reads the scores recorded against a trace", async () => {
+		const { url, server, requests } = await startMockLangFuseServer();
+		try {
+			const client = new LangFuseClient({
+				enabled: true,
+				provider: "langfuse",
+				baseUrl: url,
+				publicKey: "pk-test",
+				secretKey: "sk-test",
+			});
+			const scores = await client.fetchScores("trace-1");
+			assert.equal(scores.length, 1);
+			assert.equal(scores[0]?.name, "flavor_compliance");
+			assert.equal(scores[0]?.value, false);
+			const req = requests[0] as { method: string; url: string };
+			assert.equal(req.method, "GET");
+			assert.equal(req.url, "/api/public/scores?traceId=trace-1");
+		} finally {
+			server.closeAllConnections();
+			server.close();
+		}
 	});
 });

@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import { DEFAULTS } from "../src/config.ts";
+import { SCORE_TAXONOMY } from "../src/scores.ts";
 
 const read = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -27,6 +28,16 @@ test("the documented classifier example names a model and tells the user how to 
 	const example = JSON.parse(read(EXAMPLE)) as { classifier?: { model?: string } };
 	assert.ok(example.classifier?.model, `the example config must name a classifier`);
 	assert.match(example.classifier.model, /\//, "classifier model must be a provider/model ref");
+});
+
+test("#132: the Langfuse docs name every routing score, its type, and that scores are not a gate", () => {
+	const text = read("docs/LANGFUSE.md");
+	for (const score of SCORE_TAXONOMY) {
+		assert.match(text, new RegExp(score.name), `docs must name ${score.name}`);
+		assert.match(text, new RegExp(score.dataType), `docs must state the ${score.name} data type`);
+	}
+	assert.match(text, /\/api\/public\/scores/, "docs must name the ingestion path");
+	assert.match(text, /not a gate|observational/i, "docs must say scores cannot fail a turn");
 });
 
 test("no documented example still names a classifier known not to load (#51)", () => {

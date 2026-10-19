@@ -3,7 +3,14 @@
 All notable changes to this project. Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions follow [SemVer](https://semver.org/).
 
-## [0.6.1] — 2026-10-18
+## [Unreleased]
+
+### Added
+
+- **Routing scores.** Production routing decisions are now scored in Langfuse: `flavor_compliance`
+  flags a local-only flavor served by a cloud model, and `routed` flags a child session that never
+  entered the router. Scores are computed in code and observational — they cannot fail a turn. A
+  failing `flavor_compliance` becomes an eval fixture via `eval:export-misroutes`.
 
 ### Fixed
 
@@ -303,8 +310,7 @@ OpenAI-compatible host behind the same abstraction.
 - The heuristic scored 70.5% on the routing corpus (33 cloud prompts misrouted to
   local); rewritten as signal-based scoring, measured at 100% on the corpus (#43).
 
-[Unreleased]: https://github.com/saman-mb/pi-cuttle/compare/v0.6.1...HEAD
-[0.6.1]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.6.1
+[Unreleased]: https://github.com/saman-mb/pi-cuttle/compare/v0.6.0...HEAD
 [0.6.0]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.6.0
 [0.5.1]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.5.1
 [0.5.0]: https://github.com/saman-mb/pi-cuttle/releases/tag/v0.5.0

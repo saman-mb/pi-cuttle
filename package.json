@@ -1,6 +1,6 @@
 {
   "name": "pi-cuttle",
-  "version": "0.6.1",
+  "version": "0.6.0",
   "description": "Local-first model routing for pi — a local classifier picks the right model per turn, with a cross-process memory governor so subagent fanout cannot exhaust local VRAM. The pi extension for Cuttle.",
   "type": "module",
   "license": "MIT",

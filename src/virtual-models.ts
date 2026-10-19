@@ -22,6 +22,7 @@ import { applyPolicy, decideTier, detectPhase, gatesActive, splitRef, struggleSi
 import { appendShadow } from "./shadow.ts";
 import { isSubagent } from "./subagent.ts";
 import { LangFuseClient } from "./langfuse.ts";
+import { decisionScores } from "./scores.ts";
 import {
 	applyContextPressure,
 	applyUserCeiling,
@@ -644,6 +645,13 @@ export async function routeRequest(
 				enforceUserCeiling: rt.config.policy.thinkingLevels?.enforceUserCeiling,
 			})
 			.catch((error) => rt.log?.(`langfuse trace failed: ${error instanceof Error ? error.message : String(error)}`));
+
+		// Score the decision (#132). Observational only: a failure is logged, never thrown into the turn.
+		for (const entry of decisionScores(flavor, ref ?? "", rt.config.catalog.local)) {
+			void rt.langfuse
+				.score({ traceId, ...entry })
+				.catch((error) => rt.log?.(`langfuse score failed: ${error instanceof Error ? error.message : String(error)}`));
+		}
 	}
 
 	try {
