@@ -1,0 +1,23 @@
+[
+  {
+    "id": "architect-cuttle-local-high",
+    "agent": "architect",
+    "model": "cuttle/local:high",
+    "parentSessionId": "01a150ec-2f62-74fb-b07a-30379512b230",
+    "note": "Langfuse 2026-10-18: foreground architect died with Model \"cuttle/local:high\" not found before any token was spent."
+  },
+  {
+    "id": "senior-engineer-cuttle-local-medium",
+    "agent": "senior-engineer",
+    "model": "cuttle/local:medium",
+    "parentSessionId": "01a150fd-897c-7437-afae-0310c2c15d8d",
+    "note": "Langfuse 2026-10-18: senior-engineer inherited cuttle/local:medium and failed the same way."
+  },
+  {
+    "id": "crew-cuttle-auto-high",
+    "agent": "product-manager",
+    "model": "cuttle/auto:high",
+    "parentSessionId": "01a150ff-02d1-712d-9928-e7ba8d14d70c",
+    "note": "Langfuse 2026-10-18: a crew child launched on cuttle/auto:high was not a model the child registry knew."
+  }
+]

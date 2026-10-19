@@ -1,0 +1,196 @@
+/**
+ * Required-child-extension registration tests (#131).
+ *
+ * The point of this module is that it is *optional*: pi-cuttle has no dependency on pi-subagents,
+ * so the interesting cases are the failure paths. A fake importer stands in for the real subpath
+ * export, which is not installed in this repo — and that absence is itself the production fallback.
+ */
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+
+import {
+	REQUIRED_CHILD_EXTENSION_ID,
+	createRequiredChildExtensionController,
+	registerRequiredChildExtension,
+	type RequiredChildExtensionEntry,
+	type RequiredChildExtensionsModule,
+} from "../src/required-child-extension.ts";
+
+interface Recorded {
+	sessionId: string;
+	extensions: readonly RequiredChildExtensionEntry[];
+}
+
+/**
+ * A fake pi-subagents registry that records calls, tracks dispose, and — like the real one —
+ * rejects a second registration for a live session id. Modelling that rejection is what pins
+ * dispose-before-register ordering: a regression to register-then-dispose fails here instead of
+ * quietly falling through to the soft path.
+ */
+function fakeModule(): { module: RequiredChildExtensionsModule; calls: Recorded[]; disposed: number[] } {
+	const calls: Recorded[] = [];
+	const disposed: number[] = [];
+	const live = new Set<string>();
+	let next = 0;
+	return {
+		calls,
+		disposed,
+		module: {
+			registerRequiredChildExtensions(input) {
+				if (live.has(input.sessionId)) {
+					throw new Error(`Required child extensions are already registered for session '${input.sessionId}'; dispose them first.`);
+				}
+				live.add(input.sessionId);
+				calls.push({ sessionId: input.sessionId, extensions: input.extensions });
+				const index = next++;
+				const sessionId = input.sessionId;
+				return {
+					dispose() {
+						live.delete(sessionId);
+						disposed.push(index);
+					},
+				};
+			},
+		},
+	};
+}
+
+describe("registerRequiredChildExtension", () => {
+	it("registers the router path under the pi-cuttle id", async () => {
+		const { module, calls } = fakeModule();
+		const handle = await registerRequiredChildExtension({
+			sessionId: "session-1",
+			extensionPath: "/opt/pi-cuttle/src/index.ts",
+			importer: async () => module,
+		});
+		assert.ok(handle, "a handle is returned on success");
+		assert.deepEqual(calls, [
+			{ sessionId: "session-1", extensions: [{ id: REQUIRED_CHILD_EXTENSION_ID, path: "/opt/pi-cuttle/src/index.ts" }] },
+		]);
+	});
+
+	it("returns undefined and logs when pi-subagents is not installed", async () => {
+		const logged: string[] = [];
+		const handle = await registerRequiredChildExtension({
+			sessionId: "session-1",
+			extensionPath: "/opt/pi-cuttle/src/index.ts",
+			importer: async () => {
+				throw new Error("Cannot find module 'pi-subagents/required-child-extensions'");
+			},
+			log: (message) => logged.push(message),
+		});
+		assert.equal(handle, undefined);
+		assert.match(logged.join("\n"), /registration failed: Cannot find module/);
+	});
+
+	it("returns undefined when the export is missing or drifted", async () => {
+		const logged: string[] = [];
+		const handle = await registerRequiredChildExtension({
+			sessionId: "session-1",
+			extensionPath: "/opt/pi-cuttle/src/index.ts",
+			importer: async () => ({}) as RequiredChildExtensionsModule,
+			log: (message) => logged.push(message),
+		});
+		assert.equal(handle, undefined);
+		assert.match(logged.join("\n"), /not a function/);
+	});
+
+	it("swallows a rejection from the registry itself", async () => {
+		const logged: string[] = [];
+		const handle = await registerRequiredChildExtension({
+			sessionId: "session-1",
+			extensionPath: "/opt/pi-cuttle/src/index.ts",
+			importer: async () => ({
+				registerRequiredChildExtensions() {
+					throw new Error("Required child extensions are already registered for session 'session-1'");
+				},
+			}),
+			log: (message) => logged.push(message),
+		});
+		assert.equal(handle, undefined);
+		assert.match(logged.join("\n"), /already registered/);
+	});
+
+	it("skips registration when there is no session id", async () => {
+		const { module, calls } = fakeModule();
+		const logged: string[] = [];
+		const handle = await registerRequiredChildExtension({
+			sessionId: "",
+			extensionPath: "/opt/pi-cuttle/src/index.ts",
+			importer: async () => module,
+			log: (message) => logged.push(message),
+		});
+		assert.equal(handle, undefined);
+		assert.equal(calls.length, 0, "the registry is never called without a session id");
+		assert.match(logged.join("\n"), /no session id/);
+	});
+
+	it("never throws, whatever the importer does", async () => {
+		await assert.doesNotReject(async () =>
+			registerRequiredChildExtension({
+				sessionId: "session-1",
+				extensionPath: "/opt/pi-cuttle/src/index.ts",
+				importer: async () => {
+					throw new Error("boom");
+				},
+			}),
+		);
+	});
+});
+
+describe("createRequiredChildExtensionController", () => {
+	it("keeps an earlier session when a second session registers", async () => {
+		const { module, calls, disposed } = fakeModule();
+		const controller = createRequiredChildExtensionController({ importer: async () => module });
+		await controller.register("session-1", "/opt/pi-cuttle/src/index.ts");
+		await controller.register("session-2", "/opt/pi-cuttle/src/index.ts");
+		assert.deepEqual(
+			calls.map((call) => call.sessionId),
+			["session-1", "session-2"],
+		);
+		assert.deepEqual(disposed, [], "a sibling session must not drop the one that is still launching children");
+		controller.dispose("session-1");
+		assert.deepEqual(disposed, [0], "shutdown releases only the session that ended");
+		controller.dispose();
+		assert.deepEqual(disposed, [0, 1], "process exit releases whatever is still live");
+	});
+
+	it("disposes before re-registering the same session id (#131 resumed session)", async () => {
+		// The fake rejects a duplicate live session id, as pi-subagents does. Register-then-dispose
+		// would throw and soft-fail, so this pins the ordering rather than the happy path.
+		const { module, calls, disposed } = fakeModule();
+		const logged: string[] = [];
+		const controller = createRequiredChildExtensionController({
+			importer: async () => module,
+			log: (message) => logged.push(message),
+		});
+		await controller.register("session-1", "/opt/pi-cuttle/src/index.ts");
+		await controller.register("session-1", "/opt/pi-cuttle/src/index.ts");
+		assert.deepEqual(
+			calls.map((call) => call.sessionId),
+			["session-1", "session-1"],
+			"the same session re-registers successfully",
+		);
+		assert.deepEqual(disposed, [0]);
+		assert.equal(logged.filter((line) => /registration failed/.test(line)).length, 0);
+	});
+
+	it("disposes the live registration on request, and is idempotent", async () => {
+		const { module, disposed } = fakeModule();
+		const controller = createRequiredChildExtensionController({ importer: async () => module });
+		await controller.register("session-1", "/opt/pi-cuttle/src/index.ts");
+		controller.dispose();
+		controller.dispose();
+		assert.deepEqual(disposed, [0], "dispose runs once and tolerates being called again");
+	});
+
+	it("survives a failed registration and still disposes cleanly", async () => {
+		const controller = createRequiredChildExtensionController({
+			importer: async () => {
+				throw new Error("not installed");
+			},
+		});
+		await controller.register("session-1", "/opt/pi-cuttle/src/index.ts");
+		assert.doesNotThrow(() => controller.dispose());
+	});
+});

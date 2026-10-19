@@ -357,6 +357,14 @@ To migrate:
 3. Add category-specific tests to `eval/promptfoo.yaml`.
 4. Run both systems in parallel during transition.
 
+## Child-launch fixtures (#131)
+
+`eval/child-launch-fixtures.json` is the Langfuse crashes where a foreground child died on
+`cuttle/local:high` (and the same shape with other flavors). `npm run eval:child-launch` registers
+the router with the installed pi-subagents and checks the launch plan. It does not start a child
+and does not call a model. It needs pi-subagents on the machine; without it the command exits 2
+instead of pretending the check passed.
+
 ## References
 
 - `docs/CONFIG.md` — observability configuration

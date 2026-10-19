@@ -18,6 +18,23 @@ versions follow [SemVer](https://semver.org/).
   `warn`, or `off`; `/cuttle status` reports the counts. A launch that names no model, or names a
   `cuttle/*` model, is not affected.
 
+### Fixed
+
+- **A subagent child no longer dies on `Model "cuttle/local:high" not found` (#131).** `cuttle/*`
+  are virtual models registered with `pi.registerVirtualModel`, and a foreground child neither
+  loads the parent's ambient extensions nor inherits its virtual models — so a child launched on
+  the model the launcher inherited from a routed parent failed at preflight, in tens of
+  milliseconds, having spent nothing. Any crew run from a session on `cuttle/*` failed this way
+  every time. The router now registers itself as a required child extension on `session_start`
+  (`pi-subagents`' `registerRequiredChildExtensions`), using the path pi loaded it from, so every
+  child loads the router with no per-user config. The integration is optional: if `pi-subagents`
+  is absent or its API drifts, the router logs to `PI_CUTTLE_DEBUG` and the session still starts.
+  The manual `subagents.defaultSubagentOnlyExtensions` setup keeps working as a fallback.
+  A second session in the same process no longer drops the first session's registration, so one
+  session ending or starting cannot send the other's children back to `Model "…" not found`.
+  `npm run eval:child-launch` replays the Langfuse failures (`cuttle/local:high`,
+  `cuttle/local:medium`, `cuttle/auto:high`) through the installed launcher without starting a child.
+
 ## [0.6.0] — 2026-10-18
 
 ### Added

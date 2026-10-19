@@ -388,3 +388,42 @@ test("a subagent child launched on cuttle/auto is left to route through its mess
 		else process.env[SUBAGENT_CHILD_ENV] = original;
 	}
 });
+
+test("session_start still completes when the optional integration is unavailable (#131)", async () => {
+	// Deliberately does not assume pi-subagents is absent from the resolver: that made this test
+	// depend on the machine's node_modules and it passed or failed by accident (PE review, N3).
+	// What belongs here is the integration claim — the session starts and routes even when
+	// registration cannot happen. The "logged, not silent" claim is pinned where it can be
+	// injected deterministically: test/required-child-extension.test.ts.
+	await withTempConfig(
+		{
+			autoSelect: true,
+			local: { preload: false, pinClassifier: false },
+			catalog: { local: ["lmstudio/local-model"], cloud: ["cloud/big-model"] },
+		},
+		async () => {
+			const { pi, events, calls } = createMockPI();
+			modelRouter(pi);
+			const handler = (events["session_start"] ?? [])[0];
+			assert.ok(handler);
+			await assert.doesNotReject(async () =>
+				handler({}, createContext({ provider: "opencode-go", id: "deepseek-v4.1-flash" })),
+			);
+			assert.equal(
+				calls.setModel.length,
+				1,
+				"routing still works whether or not the optional integration registered",
+			);
+		},
+	);
+});
+
+test("session_shutdown disposes the required-child-extension registration (#131)", async () => {
+	await withTempConfig({ autoSelect: false, local: { preload: false, pinClassifier: false } }, () => {
+		const { pi, events } = createMockPI();
+		modelRouter(pi);
+		const shutdown = (events["session_shutdown"] ?? [])[0];
+		assert.ok(shutdown, "the extension registers a session_shutdown handler");
+		assert.doesNotThrow(() => shutdown({}, createContext()));
+	});
+});
