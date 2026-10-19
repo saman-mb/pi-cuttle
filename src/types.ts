@@ -92,6 +92,23 @@ export interface SubagentPolicy {
 	thinkingLevels?: ThinkingLevelsPolicy;
 }
 
+/**
+ * What the parent does when a delegation would put a child on a cloud model while the session is on
+ * a local-only flavor (#130). `block` is the default: a contract that only warns is not a contract.
+ * `warn` allows and records; `off` allows without evaluating the call.
+ */
+export const DELEGATION_MODES = ["block", "warn", "off"] as const;
+
+export type DelegationMode = (typeof DELEGATION_MODES)[number];
+
+/** The shipped default: a local-only flavor keeps its contract unless the user turns the guard off. */
+export const DEFAULT_DELEGATION_MODE: DelegationMode = "block";
+
+/** Parent-side guard for subagent launches. See `src/delegation-guard.ts`. */
+export interface DelegationConfig {
+	mode: DelegationMode;
+}
+
 export interface PolicyConfig {
 	mode: PolicyMode;
 	/** Complexity below this routes local. Used when `mode` is `complexity`. */
@@ -206,6 +223,8 @@ export interface RouterConfig {
 	policy: PolicyConfig;
 	local: LocalConfig;
 	telemetry: TelemetryConfig;
+	/** Optional parent-side guard for subagent launches (#130). Defaults to blocking cloud children. */
+	delegation?: DelegationConfig;
 	/** Optional observability backend for routing traces. */
 	observability?: ObservabilityConfig;
 	/** Optional phase-2 gates. */

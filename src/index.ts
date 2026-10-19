@@ -31,8 +31,9 @@ import { registerCuttleCommand } from "./commands.ts";
 import { Telemetry, isPhysicalTurn } from "./telemetry.ts";
 import { registerVirtualModels, type RouterRuntime } from "./virtual-models.ts";
 import { LangFuseClient } from "./langfuse.ts";
+import { createDelegationGuard, runDelegationGuard } from "./delegation-guard.ts";
 import type { Tier } from "./types.ts";
-import { VIRTUAL_PROVIDER } from "./types.ts";
+import { DEFAULT_DELEGATION_MODE, VIRTUAL_PROVIDER } from "./types.ts";
 
 /** Session id for telemetry, tolerating a minimal context (tests, early teardown). */
 function safeSessionId(ctx: { sessionManager?: { getSessionId?: () => string } }): string | undefined {
@@ -141,7 +142,23 @@ export default function modelRouter(pi: ExtensionAPI): void {
 	pi.registerFlag("cuttle-force", { type: "string", description: "Force the tier for this invocation: local | cloud" });
 
 	registerVirtualModels(pi, rt);
-	registerCuttleCommand(pi, rt, loaded, telemetry);
+
+	// #130: a session on a local-only flavor must not hand work to a cloud model by delegating to a
+	// child that was explicitly launched on one. The guard runs here, in the parent, on `tool_call`,
+	// because that is the only place that also covers a child which never loaded this extension. It
+	// reads pi-subagents' tool arguments and nothing else — no dependency on another extension's
+	// hooks (AGENTS.md: `route()` must be self-contained), and no model or network call, so it can
+	// neither slow a turn nor fail one: an unreadable event allows the launch.
+	const delegation = createDelegationGuard({
+		getMode: () => rt.config.delegation?.mode ?? DEFAULT_DELEGATION_MODE,
+		localProviders: loaded.config.local.providers,
+		...(log ? { log } : {}),
+	});
+	log?.(`delegation guard mode=${delegation.getMode()} providers=${delegation.localProviders.join(",") || "(none)"}`);
+
+	pi.on("tool_call", (event, ctx) => runDelegationGuard(delegation, event, ctx));
+
+	registerCuttleCommand(pi, rt, loaded, telemetry, delegation);
 
 	pi.on("session_start", async (_event, ctx) => {
 		log?.(`session_start autoSelect=${rt.config.autoSelect} explicit=${explicitModelRequested(process.argv)} current=${ctx.model?.provider}/${ctx.model?.id}`);

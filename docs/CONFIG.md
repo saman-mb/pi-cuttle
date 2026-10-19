@@ -322,6 +322,24 @@ servers directly, so it cannot manage how many models your server keeps resident
 Configure that in the server itself (LM Studio's memory settings, llama.cpp router presets,
 etc.).
 
+## `delegation`
+
+What the parent does when a subagent launch would put a child on a cloud model while the session is on
+a local-only flavor (`cuttle/local`, `cuttle/fast-local`, `cuttle/big-local`). See
+[SUBAGENTS.md](SUBAGENTS.md) for the rule and what it does not cover.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `mode` | `"block"` \| `"warn"` \| `"off"` | `"block"` | `block` refuses the launch before the child starts. `warn` allows it and counts it. `off` does not evaluate the call. |
+
+```json
+{ "delegation": { "mode": "warn" } }
+```
+
+An unrecognised `mode`, or a `delegation` value that is not an object, resolves to `block`. A typo in
+this file must not turn the local-only guarantee off by accident. `/cuttle status` reports how many
+launches the guard blocked and how many it allowed, once it has seen one.
+
 ## `gates` (phase 2, all off by default)
 
 Optional routing gates asked in the **same single forward pass** as the complexity

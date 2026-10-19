@@ -9,8 +9,12 @@
     "backoffMs": 60000
   },
   "catalog": {
-    "local": ["mtplx/mtplx-qwen38-27b-optimized-quality"],
-    "cloud": ["opencode-go/deepseek-v4.1-flash"]
+    "local": [
+      "mtplx/mtplx-qwen38-27b-optimized-quality"
+    ],
+    "cloud": [
+      "opencode-go/deepseek-v4.1-flash"
+    ]
   },
   "capabilities": {
     "mtplx/mtplx-qwen38-27b-optimized-quality": 0.8,
@@ -19,7 +23,10 @@
   "policy": {
     "mode": "complexity",
     "threshold": 0.5,
-    "phase": { "plan": "cloud", "implement": "local" },
+    "phase": {
+      "plan": "cloud",
+      "implement": "local"
+    },
     "reclassify": "session"
   },
   "local": {
@@ -29,7 +36,15 @@
     "waitMs": 20000,
     "slotDir": "~/.pi/agent/pi-cuttle/slots",
     "staleSlotMs": 300000,
-    "providers": ["lmstudio", "llama.cpp", "ollama", "mtplx"]
+    "providers": [
+      "lmstudio",
+      "llama.cpp",
+      "ollama",
+      "mtplx"
+    ]
+  },
+  "delegation": {
+    "mode": "block"
   },
   "_note": "telemetry.pricing is now optional; /cuttle stats falls back to pi's registry cost.",
   "telemetry": {
@@ -37,7 +52,10 @@
     "path": "~/.pi/agent/pi-cuttle/decisions.jsonl",
     "baseline": "opencode-go/deepseek-v4.1-flash",
     "pricing": {
-      "opencode-go/deepseek-v4.1-flash": { "input": 0.14, "output": 0.56 }
+      "opencode-go/deepseek-v4.1-flash": {
+        "input": 0.14,
+        "output": 0.56
+      }
     }
   }
 }
