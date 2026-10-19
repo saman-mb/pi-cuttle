@@ -37,6 +37,33 @@ test("defaults route by complexity once per session", () => {
 	assert.equal(DEFAULTS.local.maxConcurrent, 1);
 });
 
+/**
+ * The #130 delegation guard. `block` is the shipped default, so these pins are also the proof that
+ * the default did not quietly soften to `warn` — the mode that would let a cloud child through.
+ */
+test("the delegation guard defaults to blocking cloud children under local-only flavors", () => {
+	assert.equal(DEFAULTS.delegation?.mode, "block");
+	assert.equal(applyOverrides(DEFAULTS, { delegation: { mode: "warn" } }).delegation?.mode, "warn");
+	assert.equal(applyOverrides(DEFAULTS, { delegation: { mode: "off" } }).delegation?.mode, "off");
+});
+
+test("an unreadable delegation mode falls back to the blocking default, not to off", () => {
+	// A typo in config must not silently disable the guard; it must keep the safer behaviour.
+	assert.equal(applyOverrides(DEFAULTS, { delegation: { mode: "blockish" } }).delegation?.mode, "block");
+	assert.equal(applyOverrides(DEFAULTS, { delegation: { mode: false } }).delegation?.mode, "block");
+	assert.equal(applyOverrides(DEFAULTS, { delegation: "block" }).delegation?.mode, "block");
+});
+
+test("a delegation section that is not an object is ignored, and unknown keys do not defeat the default", () => {
+	// A typo in this file must not turn the local-only guarantee off by accident.
+	const stringSection = applyOverrides(DEFAULTS, { delegation: "block" });
+	assert.equal(stringSection.delegation?.mode, "block");
+
+	const started = applyOverrides(DEFAULTS, { delegation: { mode: "off" } });
+	const patched = applyOverrides(started, { delegation: { somethingElse: true } });
+	assert.equal(patched.delegation?.mode, "off", "a partial patch must not silently re-arm the guard");
+});
+
 test("applyOverrides replaces only the sections present", () => {
 	const merged = applyOverrides(DEFAULTS, {
 		catalog: { local: ["lmstudio/a"], cloud: ["cloud/b"] },

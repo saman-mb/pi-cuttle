@@ -9,7 +9,7 @@ re-verified end-to-end on pi-subagents 0.79.1 after #131):
 
 | Child type | Ambient extensions loaded? | Virtual models resolve? |
 |---|---|---|
-| Foreground, no `subagentOnlyExtensions` | No | **Yes** on pi-subagents builds exposing `registerRequiredChildExtensions` (the router registers itself, #131); otherwise **No** — falls through to an unrelated provider |
+| Foreground, no `subagentOnlyExtensions` | No | **Yes** on pi-subagents builds exposing `registerRequiredChildExtensions` (the router registers itself, #131); otherwise **No** — the launch **errors out** with `Model "cuttle/local:high" not found`. It does not fall through to another provider (verified on pi 1.3.0; that failure was tracked as #131) |
 | Foreground, with `subagentOnlyExtensions` | Yes (explicitly listed) | **Yes** |
 | Background | Yes (detached runner) | Yes |
 
@@ -95,6 +95,35 @@ code does not need to know about roles:
 ```
 
 Per-run override still works: `subagent({ agent: "scout", model: "cuttle/local" })`.
+
+## The local-only contract reaches children (#130)
+
+A session on `cuttle/local`, `cuttle/fast-local` or `cuttle/big-local` promises the work never reaches a
+cloud model. That promise used to stop at the session boundary: a delegation that named a cloud model
+explicitly — `subagent({ agent: "scout", model: "opencode-go/..." })` — ran the child on it, because
+child model choice belongs to pi-subagents and the router was never asked.
+
+The router now enforces the contract **in the parent**, on `tool_call`, before the child starts. It
+lives in the parent deliberately: that is the only place that also covers a child which never loaded
+the extension. It reads the launch tool's arguments and nothing else, so it depends on no other
+extension's hooks.
+
+| Parent flavor | Child model requested | What happens |
+|---|---|---|
+| `local` / `fast-local` / `big-local` | a cloud model, named explicitly | **Blocked.** The child never starts; the calling model gets a notice naming the flavor, the refused model, and the two ways forward |
+| `local` / `fast-local` / `big-local` | a local model, or a `cuttle/*` model | Allowed. A `cuttle/*` child that cannot resolve is #131, not this gate |
+| `local` / `fast-local` / `big-local` | none (inherits) | Allowed. Inheritance is not this gate's business |
+| `auto` / `cloud` / `orchestrator` | anything | Allowed. Only the local-only flavors carry the contract |
+
+The notice is written to be read by a model, not a person: it says it is a block notice and not a
+result, because a terse reason gets quoted back as if it were the child's answer.
+
+When the guard cannot tell — no readable payload, no classifiable model, no flavor — it **allows** the
+launch. A guard bug must never cost a session a turn. Every decision it could make is counted, and
+`/cuttle status` shows the counts once it has seen one.
+
+`delegation.mode` chooses the behaviour: `block` (the default), `warn` (allow, but count it), or
+`off`. See [CONFIG.md](CONFIG.md#delegation).
 
 ## Memory safety with fanout
 

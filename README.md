@@ -194,6 +194,10 @@ explicitly instead — the fallback still works:
 }
 ```
 
+A session on `cuttle/local`, `cuttle/fast-local` or `cuttle/big-local` keeps that promise for its
+children too: a delegation that names a cloud model explicitly is **refused before the child starts**.
+Set `delegation.mode` to `warn` or `off` to loosen it. Details in [docs/SUBAGENTS.md](docs/SUBAGENTS.md).
+
 Then choose a policy per role with pi's native mapping — no router code changes:
 
 ```json

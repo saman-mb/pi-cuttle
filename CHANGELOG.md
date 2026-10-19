@@ -11,6 +11,12 @@ versions follow [SemVer](https://semver.org/).
   flags a local-only flavor served by a cloud model, and `routed` flags a child session that never
   entered the router. Scores are computed in code and observational — they cannot fail a turn. A
   failing `flavor_compliance` becomes an eval fixture via `eval:export-misroutes`.
+- **Local-only flavors now cover delegated children (#130).** A session on `cuttle/local`,
+  `cuttle/fast-local` or `cuttle/big-local` refuses a subagent launch that names a cloud model
+  explicitly, before the child starts. The guard runs in the parent on `tool_call`, so it also
+  covers a child that never loaded the extension. `delegation.mode` selects `block` (the default),
+  `warn`, or `off`; `/cuttle status` reports the counts. A launch that names no model, or names a
+  `cuttle/*` model, is not affected.
 
 ### Fixed
 
