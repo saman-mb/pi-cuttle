@@ -178,8 +178,12 @@ The `/cuttle` commands report through the terminal UI. For headless use, set
 
 ## Subagents
 
-A subagent only routes if it loads this extension. Add it to the pi-subagents defaults so
-every child does:
+A subagent only routes if it loads this extension. Install pi-cuttle as a pi package and that is
+handled for you: on `session_start` the router registers itself as a required child extension, so
+every child loads it and a child launched on an inherited `cuttle/*` model resolves it (#131).
+
+If your `pi-subagents` build predates `registerRequiredChildExtensions`, list the router
+explicitly instead — the fallback still works:
 
 ```json
 {

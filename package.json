@@ -62,6 +62,7 @@
     "eval:export-misroutes": "node --experimental-strip-types eval/export-misroutes.ts",
     "eval:convert-misroutes": "node --experimental-strip-types eval/convert-misroutes.ts",
     "eval:subagent-audit": "node --experimental-strip-types eval/subagent-audit.ts",
+    "eval:child-launch": "node --experimental-strip-types eval/child-launch.ts",
     "eval:promptfoo": "promptfoo eval -c eval/promptfoo.yaml --output eval/results.json",
     "eval:promptfoo:view": "promptfoo view eval/results.json",
     "eval:promptfoo:misroutes": "npm run eval:convert-misroutes && promptfoo eval -c eval/misroutes-promptfoo.yaml --output eval/misroutes-results.json",

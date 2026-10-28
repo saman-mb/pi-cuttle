@@ -12,15 +12,21 @@
  *          does not hijack the session model unless the user explicitly opts in.
  *   - #26: extension flags are unreadable during the factory; `--cuttle-force` is read lazily.
  *   - #25: `message_end` fires exactly once per assistant message.
- *   - #28: children only route if they load this extension, so the documented setup adds it
- *          to `subagents.defaultSubagentOnlyExtensions`.
+ *   - #28: children only route if they load this extension. The operator's manual setup adds it to
+ *          `subagents.defaultSubagentOnlyExtensions`; since #131 the router also registers itself as
+ *          a required child extension, so the manual config is a fallback rather than the fix.
  *   - #95: auto-select never claims a session whose model was already chosen — subagent
  *          children (`PI_SUBAGENT_CHILD=1`) and any session with a `parentSession` header
  *          (foreground children, forks). Claiming a child fails pi-subagents' model
  *          verification against its launch candidate.
+ *   - #131: a foreground child does not load the parent's ambient extensions, so it inherits the
+ *          parent's providers but not its `registerVirtualModel` models. Registering the router
+ *          with pi-subagents' `registerRequiredChildExtensions` makes the router load in every
+ *          child; the integration is optional and every failure path is soft.
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { appendFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import { loadConfig } from "./config.ts";
 import { splitRef } from "./classifier.ts";
@@ -30,6 +36,7 @@ import { LocalGovernor } from "./governor.ts";
 import { registerCuttleCommand } from "./commands.ts";
 import { Telemetry, isPhysicalTurn } from "./telemetry.ts";
 import { registerVirtualModels, type RouterRuntime } from "./virtual-models.ts";
+import { createRequiredChildExtensionController } from "./required-child-extension.ts";
 import { LangFuseClient } from "./langfuse.ts";
 import { createDelegationGuard, runDelegationGuard } from "./delegation-guard.ts";
 import type { Tier } from "./types.ts";
@@ -103,6 +110,19 @@ function observeChildBypass(rt: RouterRuntime, ctx: ExtensionContext, kind: "sub
 		.catch((error) => rt.log?.(`langfuse bypass failed: ${error instanceof Error ? error.message : String(error)}`));
 }
 
+/**
+ * Absolute path to this extension's entry module, used to tell pi-subagents which extension
+ * every child must load (#131). `import.meta.url` is the file pi loaded, so an installed copy and
+ * a checkout each register themselves rather than a stale configured path.
+ */
+function extensionEntryPath(): string {
+	try {
+		return fileURLToPath(import.meta.url);
+	} catch {
+		return "";
+	}
+}
+
 export default function modelRouter(pi: ExtensionAPI): void {
 	const loaded = loadConfig(process.cwd());
 	const debugPath = process.env.PI_CUTTLE_DEBUG;
@@ -160,8 +180,17 @@ export default function modelRouter(pi: ExtensionAPI): void {
 
 	registerCuttleCommand(pi, rt, loaded, telemetry, delegation);
 
+	// #131: the router loads in every child, so a foreground child on an inherited `cuttle/*` model
+	// resolves it instead of dying at preflight with `Model "…" not found`. Registered for every
+	// session that loads this extension, not just top-level ones: a child that itself delegates
+	// needs the same snapshot, and pi-subagents keys the registry by session id, so a nested
+	// session registers under its own id rather than shadowing its parent's.
+	const requiredChildExtension = createRequiredChildExtensionController(log ? { log } : {});
+
 	pi.on("session_start", async (_event, ctx) => {
 		log?.(`session_start autoSelect=${rt.config.autoSelect} explicit=${explicitModelRequested(process.argv)} current=${ctx.model?.provider}/${ctx.model?.id}`);
+		const requiredChildSessionId = safeSessionId(ctx);
+		if (requiredChildSessionId) await requiredChildExtension.register(requiredChildSessionId, extensionEntryPath());
 		if (!rt.config.autoSelect) return;
 		if (explicitModelRequested(process.argv)) return;
 		if (ctx.model?.provider === VIRTUAL_PROVIDER) return;
@@ -221,6 +250,16 @@ export default function modelRouter(pi: ExtensionAPI): void {
 		});
 	});
 
+	// Release only this session's snapshot. Another session in the same process still has children.
+	pi.on("session_shutdown", (_event, ctx) => {
+		const sessionId = safeSessionId(ctx);
+		if (sessionId) requiredChildExtension.dispose(sessionId);
+		else requiredChildExtension.dispose();
+	});
+
 	// Safety net for teardown; stale reaping covers crashes.
-	process.once("exit", () => governor.releaseAll());
+	process.once("exit", () => {
+		requiredChildExtension.dispose();
+		governor.releaseAll();
+	});
 }

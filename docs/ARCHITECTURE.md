@@ -97,4 +97,4 @@ the floor. Add a prompt that exposed a real misroute before changing heuristics.
 | `defaultModel: "cuttle/auto"` resolves at startup? | **No** | Select it on `session_start` via `pi.setModel`; `autoSelect` defaults to `false`, so this is opt-in (#24). |
 | `message_end` once per provider request? | **Yes** | Slot release is exact; stale reaping is a safety net (#25). |
 | Extension flags readable in the factory? | **No** | Read `--cuttle-force` lazily in `route()` (#26). |
-| Children inherit virtual models? | **Not reliably** | Load the extension via `subagentOnlyExtensions` (#28). |
+| Children inherit virtual models? | **Not reliably** | Register the router as a required child extension on `session_start` (#131); `subagentOnlyExtensions` remains the manual fallback (#28). |

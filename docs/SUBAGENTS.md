@@ -3,12 +3,13 @@
 ## The problem
 
 `pi-subagents` runs children as pi sessions. A child routes through `cuttle/*` only if the
-router's virtual models are registered in the child's session. There are three loading paths,
-and only one is reliable (verified on pi 1.2.0 + the installed `pi-subagents`):
+router's virtual models are registered in the child's session. There are three loading paths
+(verified on pi 1.2.0 + the installed `pi-subagents`; the foreground-without-config row was
+re-verified end-to-end on pi-subagents 0.79.1 after #131):
 
 | Child type | Ambient extensions loaded? | Virtual models resolve? |
 |---|---|---|
-| Foreground, no `subagentOnlyExtensions` | No | **No** — the launch **errors out** with `Model "cuttle/local:high" not found`. It does not fall through to another provider (verified on pi 1.3.0; tracked as #131) |
+| Foreground, no `subagentOnlyExtensions` | No | **Yes** on pi-subagents builds exposing `registerRequiredChildExtensions` (the router registers itself, #131); otherwise **No** — the launch **errors out** with `Model "cuttle/local:high" not found`. It does not fall through to another provider (verified on pi 1.3.0; that failure was tracked as #131) |
 | Foreground, with `subagentOnlyExtensions` | Yes (explicitly listed) | **Yes** |
 | Background | Yes (detached runner) | Yes |
 
@@ -27,8 +28,19 @@ fails with `Unknown subagent model 'cuttle/auto' in the active Pi model registry
 pi install git:github.com/saman-mb/pi-cuttle
 ```
 
-Then add the router to `subagents.defaultSubagentOnlyExtensions` so every child loads it and
-its `session_start` handler selects `cuttle/auto`:
+That is the whole setup. Since #131 the router registers **itself** as a required child extension
+on `session_start` (`registerRequiredChildExtensions`, using the path pi loaded it from), so every
+child loads it with no config. Foreground children stop dying on an inherited `cuttle/local:high`
+with `Model "cuttle/local:high" not found`.
+
+That integration is optional and every failure is soft: if `pi-subagents` is absent or its API has
+drifted, the router logs to `PI_CUTTLE_DEBUG` and the session still starts. pi-cuttle has no runtime
+dependency on pi-subagents.
+
+### Manual fallback
+
+Older `pi-subagents` builds, or a pi that cannot load the extension by path, can list the router
+explicitly. This still works and is still honoured — it is simply no longer required:
 
 ```json
 {
@@ -45,6 +57,16 @@ The router never overrides a pinned model in a child: `autoSelect` is skipped in
 child processes (`PI_SUBAGENT_CHILD=1`) and in any session with a `parentSession` header
 (foreground children and forks). Children route because the launcher chose `cuttle/auto`,
 not because `session_start` re-claimed them — so per-agent physical models keep working.
+
+A child that itself delegates registers under its own session id, so a nested subagent gets the
+router too; the parent's snapshot is untouched. A second session in the same process is the same:
+starting or shutting one down does not drop the other's registration.
+
+One deliberate limit: the registration does not set `requireForAllRunners`, so a child placed on a
+remote machine or a non-native runner still surfaces pi's opaque `Model "…" not found` rather than
+pi-subagents' clearer "host requires child extensions" diagnostic. Forcing that flag would make such
+agents fail to launch at all, which is worse than a confusing message — so the router asks only for
+what every local child can honour.
 
 ## Per-role policies
 
